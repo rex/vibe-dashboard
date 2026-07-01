@@ -110,56 +110,40 @@ enum DeriveIntegrations {
                           notes: notes.isEmpty ? [Note(tone: .ok, text: "pinned, non-root, healthchecked")] : notes)
     }
 
-    // Skill usage is INFERRED from tech, because the skeleton records no per-repo
-    // skill manifest (a real hole — see SkeletonProbe). project.stack is free-form
-    // ("swift-apple" / "swift-macos" / "swift-ios-watchos"), so we detect by the
-    // actual stack family + files on disk rather than an exact string match — that
-    // brittle `== "swift-apple"` is why lang-swift-apple used to show "used by 1".
+    // Skills are reported ONLY from real provenance — NEVER inferred from code.
+    // Capability-driven detection ("has .swift → lang-swift-apple is applied") is a
+    // lie: it claims a skill governs a repo that may never have adopted it, which is
+    // worse than no detection. The authoritative record is a `skills:` block in
+    // VIBE.yaml (id + version + when-applied) that the skeleton must write on apply.
+    // Until a repo records that, its lang/tool skills are simply UNKNOWN — and the
+    // app says so rather than guess. The only other honest signal is the on-disk
+    // skeleton stamp (.claude/skeleton-version), which is a real artifact, not a guess.
     static func skills(_ abs: String, vibe: [String: Any]?, stack: String) -> [SkillUse] {
         var out: [SkillUse] = []
-        let s = stack.lowercased()
-        func has(_ f: String) -> Bool { exists(join(abs, f)) }
-        func hasNs(_ k: String) -> Bool { vibe?[k] != nil }
-
-        if exists(join(abs, "AGENTS.md")) || exists(join(abs, "VIBE.yaml")) {
-            var v: String? = nil
-            if let sv = try? String(contentsOfFile: join(abs, ".claude/skeleton-version"), encoding: .utf8) {
-                v = sv.trimmingCharacters(in: .whitespacesAndNewlines)
+        var seen = Set<String>()
+        func emit(_ id: String, version: String?, status: SkillState, note: String? = nil) {
+            guard !seen.contains(id) else { return }
+            seen.insert(id)
+            out.append(SkillUse(skillId: id, installed: version, status: status, note: note))
+        }
+        // 1) Authoritative: skills the repo RECORDS in its VIBE.yaml.
+        if let recorded = vibe?["skills"] as? [[String: Any]] {
+            for entry in recorded {
+                guard let id = entry["id"] as? String else { continue }
+                emit(id, version: entry["version"].map { "\($0)" }, status: .ok)
             }
-            out.append(SkillUse(skillId: "agentic-skeleton", installed: v, status: v == nil ? .drift : .ok,
-                                note: v == nil ? "not stamped — no .claude/skeleton-version" : nil))
+        } else if let ids = vibe?["skills"] as? [String] {
+            for id in ids { emit(id, version: nil, status: .ok) }
         }
-        // Any Apple/Swift repo, however its stack string is spelled.
-        let isSwift = ["swift", "apple", "ios", "macos", "watchos", "tvos", "xcode"].contains { s.contains($0) }
-            || has("Package.swift") || has("project.yml") || dirHasXcodeproj(abs)
-        if isSwift {
-            out.append(SkillUse(skillId: "lang-swift-apple", installed: nil, status: .ok,
-                                note: hasNs("apple") ? nil : "inferred from stack — no apple: namespace in VIBE.yaml"))
-        }
-        if s.contains("python") || s.contains("ansible") || has("pyproject.toml") || has("requirements.txt") {
-            out.append(SkillUse(skillId: "lang-python", installed: nil, status: .ok,
-                                note: hasNs("python") ? nil : "inferred from stack"))
-        }
-        if s.contains("mcp") { out.append(SkillUse(skillId: "lang-mcp", installed: nil, status: .ok)) }
-        // Next.js (App Router/SSR) is lang-react; plain SPA / Vite is lang-react-spa.
-        if s.contains("next") {
-            out.append(SkillUse(skillId: "lang-react", installed: nil, status: .ok))
-        } else if s.contains("react") || s.contains("vite") || s.contains("spa") {
-            out.append(SkillUse(skillId: "lang-react-spa", installed: nil, status: .ok))
-        }
-        if s == "go" || s.hasPrefix("go-") || s.contains("golang") || has("go.mod") {
-            out.append(SkillUse(skillId: "lang-go", installed: nil, status: .ok))
-        }
-        if has("Dockerfile") { out.append(SkillUse(skillId: "lang-docker", installed: nil, status: .ok,
-                                                   note: hasNs("docker") ? nil : "Dockerfile present — no docker: namespace")) }
-        if exists(join(abs, ".github/workflows")) || exists(join(abs, ".gitea/workflows")) {
-            out.append(SkillUse(skillId: "tool-ci", installed: nil, status: hasNs("ci") ? .ok : .drift,
-                                note: hasNs("ci") ? nil : "no ci: namespace in VIBE.yaml"))
+        // 2) Real on-disk artifact (not inference): the skeleton stamp.
+        if exists(join(abs, ".claude/skeleton-version")) || exists(join(abs, "VIBE.yaml")) {
+            let v = (try? String(contentsOfFile: join(abs, ".claude/skeleton-version"), encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let stamped = (v?.isEmpty == false)
+            emit("agentic-skeleton", version: stamped ? v : nil, status: stamped ? .ok : .drift,
+                 note: stamped ? nil : "not stamped — no .claude/skeleton-version")
         }
         return out
-    }
-    private static func dirHasXcodeproj(_ abs: String) -> Bool {
-        (try? fm.contentsOfDirectory(atPath: abs))?.contains { $0.hasSuffix(".xcodeproj") } ?? false
     }
 
     static func build(_ abs: String, git: GitFacts) -> RepoBuild {

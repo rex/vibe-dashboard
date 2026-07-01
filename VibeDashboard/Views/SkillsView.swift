@@ -80,9 +80,10 @@ struct SkillsView: View {
             Text("skeleton, lang & tool coverage across every repo under \(store.fleet.scanner.root).")
                 .font(VibeFont.mono(VibeFont.size.sm))
                 .foregroundStyle(Theme.color.textSecondary)
-            Text("usage is inferred from each repo's stack + files — the skeleton records no per-repo skill manifest.")
+            Text("shown only where a repo RECORDS a skill (VIBE.yaml skills:) or carries the skeleton stamp — never guessed from code. applied-but-unrecorded skills stay invisible until backfilled.")
                 .font(VibeFont.mono(VibeFont.size.xxs))
                 .foregroundStyle(Theme.color.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
