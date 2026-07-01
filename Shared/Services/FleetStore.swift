@@ -40,9 +40,6 @@ final class FleetStore {
         isScanning = false
     }
 
-    var selectedRepo: Repo? { fleet.repo(selectedId) }
-    var selectedId: String? = nil
-
     static func appBuild() -> AppBuild {
         AppBuild(version: "v" + BuildInfo.marketingVersion, commit: BuildInfo.commitShortSHA,
                  date: BuildInfo.commitDateShort, channel: "dev", codename: "phosphor")

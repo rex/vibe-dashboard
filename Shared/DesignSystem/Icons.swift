@@ -71,6 +71,16 @@ enum Lucide {
         "trending-up": "chart.line.uptrend.xyaxis", "trending-down": "chart.line.downtrend.xyaxis",
         "gauge": "gauge.medium", "scan": "viewfinder", "radar": "dot.radiowaves.left.and.right",
         "hard-drive": "internaldrive", "cpu-2": "cpu",
+        // nav + chrome extras
+        "blocks": "square.grid.3x3.fill.square", "gauge-circle": "gauge.with.dots.needle.67percent",
+        "corner-down-right": "arrow.turn.down.right",
+        "file-down": "square.and.arrow.down", "flask-conical": "testtube.2",
+        "circle-help": "questionmark.circle", "octagon-alert": "exclamationmark.octagon",
+        "square-arrow-out-up-right": "arrow.up.forward.square",
+        "list-tree": "list.bullet.indent", "shield-x": "xmark.shield",
+        "git-compare": "arrow.triangle.2.circlepath", "arrow-up-down": "arrow.up.arrow.down",
+        "circle-dot-dashed": "smallcircle.filled.circle", "square-dashed": "square.dashed",
+        "signal": "chart.bar.fill", "waypoints-2": "point.3.connected.trianglepath.dotted",
     ]
 
     static func symbol(_ lucide: String) -> String {

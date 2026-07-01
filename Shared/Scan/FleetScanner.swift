@@ -33,8 +33,18 @@ struct FleetScanner: Sendable {
             let parent = absSet.filter { $0 != mine && mine.hasPrefix($0 + "/") }.max { $0.count < $1.count }
             repos[i].parentId = parent.flatMap { idByAbs[$0] }
         }
+        // Keep only managed repos (+ their ancestors, which become workspaces).
+        var keep = Set(repos.filter { $0.managed }.map { $0.id })
+        var changed = true
+        while changed {
+            changed = false
+            for r in repos where keep.contains(r.id) {
+                if let p = r.parentId, !keep.contains(p) { keep.insert(p); changed = true }
+            }
+        }
+        repos = repos.filter { keep.contains($0.id) }
         var childrenOf: [String: [String]] = [:]
-        for r in repos { if let p = r.parentId { childrenOf[p, default: []].append(r.id) } }
+        for r in repos { if let p = r.parentId, keep.contains(p) { childrenOf[p, default: []].append(r.id) } }
 
         // Live agent sessions → attach to the deepest matching repo.
         let sessions = await AgentProbe.sessions()
@@ -151,6 +161,9 @@ struct FleetScanner: Sendable {
         r.skills = DeriveIntegrations.skills(abs, vibe: vibe, stack: idn.stack)
         r.build = DeriveIntegrations.build(abs, git: git)
         r.policy = vibe.map { PolicyProbe.sections($0) } ?? []
+        r.managed = FileProbes.exists(FileProbes.join(abs, "VIBE.yaml"))
+            || FileProbes.exists(FileProbes.join(abs, "AGENTS.md"))
+            || FileProbes.exists(FileProbes.join(abs, ".claude"))
         r.checked = "just now"
         return r
     }

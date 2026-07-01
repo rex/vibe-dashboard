@@ -19,6 +19,7 @@ struct Repo: Identifiable, Sendable, Hashable {
     var pm: String = "—"
     var framework: String = "—"
     var desc: String = ""
+    var managed: Bool = false      // has VIBE.yaml / AGENTS.md / .claude — an agentic repo
 
     // rollup
     var health: Health = .ok
