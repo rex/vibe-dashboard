@@ -38,6 +38,7 @@ struct ToolbarView: View {
                     Text(r.path).font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textMuted).lineLimit(1)
                 }
                 .frame(maxWidth: 220, alignment: .leading)
+                .help("\(r.name) · \(r.path)")
             }
 
             Spacer(minLength: Theme.space.x2)

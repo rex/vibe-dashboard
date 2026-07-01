@@ -27,24 +27,6 @@ struct WindowConfigurator: NSViewRepresentable {
             w.titleVisibility = .hidden
             w.isMovableByWindowBackground = true
             w.titlebarSeparatorStyle = .none
-            growTitlebar(w)
-        }
-
-        /// A zero-width titlebar accessory of the toolbar's height grows the
-        /// titlebar so macOS vertically centers the traffic lights in it — the
-        /// non-hacky way to align them with a tall custom toolbar.
-        private func growTitlebar(_ w: NSWindow) {
-            let ident = NSUserInterfaceItemIdentifier("vibe.titlebar.height")
-            guard !w.titlebarAccessoryViewControllers.contains(where: { $0.identifier == ident }) else { return }
-            let vc = NSTitlebarAccessoryViewController()
-            vc.identifier = ident
-            vc.layoutAttribute = .trailing
-            let spacer = NSView()
-            spacer.translatesAutoresizingMaskIntoConstraints = false
-            spacer.heightAnchor.constraint(equalToConstant: toolbarHeight).isActive = true
-            spacer.widthAnchor.constraint(equalToConstant: 0).isActive = true
-            vc.view = spacer
-            w.addTitlebarAccessoryViewController(vc)
         }
     }
 }

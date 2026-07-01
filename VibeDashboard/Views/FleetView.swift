@@ -93,6 +93,7 @@ private struct RepoTableRow: View {
     let repo: Repo
     let depth: Int
     var onTap: () -> Void
+    @Environment(FleetStore.self) private var store
     @State private var hover = false
     var body: some View {
         HStack(spacing: 12) {
@@ -129,8 +130,14 @@ private struct RepoTableRow: View {
         .background(hover ? Theme.color.surfaceRaised : .clear)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.color.borderSubtle).frame(height: 1) }
         .contentShape(Rectangle())
+        .help("\(repo.name) · \(repo.path)")
+        .opacity(store.isIgnored(repo.id) ? 0.45 : 1)
         .onHover { hover = $0 }
         .onTapGesture(perform: onTap)
+        .contextMenu {
+            Button(store.isIgnored(repo.id) ? "Show in fleet" : "Ignore repo") { store.toggleIgnore(repo.id) }
+            Button("Open detail") { onTap() }
+        }
     }
 }
 

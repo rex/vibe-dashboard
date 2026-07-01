@@ -5,18 +5,24 @@ import SwiftUI
 struct MacRootView: View {
     @Environment(AppState.self) private var app
     @Environment(FleetStore.self) private var store
+    @AppStorage("vibe.sidebarW") private var sidebarWidth: Double = 248
+    @AppStorage("vibe.consoleH") private var consoleHeight: Double = 210
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 0) {
                 ToolbarView()
                 HStack(spacing: 0) {
-                    SidebarView()
+                    SidebarView(width: sidebarWidth)
+                    ResizeHandle(axis: .horizontal, value: $sidebarWidth, range: 200...560)
                     VStack(spacing: 0) {
                         content
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             .background(Theme.color.bgApp)
-                        if app.consoleOpen { ConsoleView() }
+                        if app.consoleOpen {
+                            ResizeHandle(axis: .vertical, value: $consoleHeight, range: 120...600, invert: true)
+                            ConsoleView(height: consoleHeight)
+                        }
                     }
                     if app.inspectorOpen { InspectorView() }
                 }
@@ -26,6 +32,7 @@ struct MacRootView: View {
 
             ToastStack(toasts: app.toasts) { app.dismissToast($0) }
         }
+        .ignoresSafeArea(.container, edges: .top)
         .background(Theme.color.bgVoid)
         .background(WindowConfigurator())
         .overlay { OverlayHost() }

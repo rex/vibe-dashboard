@@ -7,9 +7,10 @@ enum Derive {
         var g: [Gate] = []
         g.append(Gate(name: "lint", command: "make lint", status: .skip, detail: "advisory"))
         g.append(Gate(name: "typecheck", command: "make typecheck", status: .skip, detail: "run to check"))
-        let arch: GateStatus = r.census.godFiles.isEmpty ? (r.census.softCount > 0 ? .warn : .ok) : .fail
+        // Soft-limit files are IN POLICY (under hard) — never a gate warning.
+        let arch: GateStatus = r.census.godFiles.isEmpty ? .ok : .fail
         let archDetail = r.census.godFiles.isEmpty
-            ? (r.census.softCount > 0 ? "\(r.census.softCount) over soft" : "within limits")
+            ? (r.census.softCount > 0 ? "\(r.census.softCount) over soft · in policy" : "within limits")
             : "\(r.census.godFiles.count) god-file\(r.census.godFiles.count == 1 ? "" : "s")"
         g.append(Gate(name: "architecture", command: "make check-architecture", status: arch, detail: archDetail))
         g.append(Gate(name: "tests", command: "make test", status: .skip, detail: "run to check"))
@@ -28,8 +29,8 @@ enum Derive {
         if r.worktree.unpushed > 0 { s -= 3 }
         if signedRequired && !r.worktree.signed { s -= 15 }
         if r.drift.behind != nil { s -= 6 }
-        switch r.docs.changelog.status { case .fail: s -= 5; case .warn: s -= 3; default: break }
-        switch r.docs.taskState.status { case .fail: s -= 6; case .warn: s -= 3; default: break }
+        switch r.docs.changelog.status { case .fail: s -= 5; default: break }
+        switch r.docs.taskState.status { case .fail: s -= 6; default: break }
         if let cov = r.coverage, let floor = r.coverageFloor, cov < floor { s -= (floor - cov) / 2 }
         if r.agentActive && !r.hasActiveGuardrail() { s -= 10 }
         if r.mcp.contains(where: { $0.status == .failed }) { s -= 3 }
@@ -44,8 +45,8 @@ enum Derive {
             || r.docs.taskState.status == .fail
             || r.hooks.contains { $0.status == .missing }
         if danger { return .danger }
-        let warn = !r.worktree.clean || r.drift.behind != nil || r.census.softCount > 0
-            || r.docs.changelog.status == .warn || r.docs.taskState.status == .warn
+        // Real signals only — soft-limit files and near-current changelogs are in policy.
+        let warn = !r.worktree.clean || r.drift.behind != nil
             || (r.coverage.map { c in (r.coverageFloor.map { c < $0 } ?? false) } ?? false)
             || r.mcp.contains { $0.status == .failed || $0.broad }
         return warn ? .warn : .ok
@@ -83,13 +84,13 @@ enum Derive {
         if let behind = r.drift.behind {
             add(.med, "Drift", "skeleton \(behind) behind", "\(r.drift.files) skeleton-owned files drifted.", "reconcile")
         }
-        // docs
-        if r.docs.taskState.status != .ok {
-            add(r.docs.taskState.status == .fail ? .high : .low, "Docs", "TASK_STATE.md \(r.docs.taskState.lines) lines",
-                "Agent state file is oversized — it's a dumping ground, not a plan.", "open file")
+        // docs — only HARD-limit bloat is a problem; soft is in policy.
+        if r.docs.taskState.status == .fail {
+            add(.high, "Docs", "TASK_STATE.md \(r.docs.taskState.lines) lines",
+                "Agent state file is over the hard limit — a dumping ground, not a plan.", "open file")
         }
-        if r.docs.changelog.status != .ok {
-            add(r.docs.changelog.status == .fail ? .med : .low, "Docs", "CHANGELOG.md \(r.docs.changelog.behind) behind",
+        if r.docs.changelog.status == .fail {
+            add(.med, "Docs", "CHANGELOG.md \(r.docs.changelog.behind) behind",
                 "Last entry \(r.docs.changelog.lastUpdated). Release notes are fiction right now.", "open file")
         }
         // hooks

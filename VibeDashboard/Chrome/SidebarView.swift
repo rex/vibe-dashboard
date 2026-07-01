@@ -4,6 +4,7 @@ import SwiftUI
 import AppKit
 
 struct SidebarView: View {
+    var width: CGFloat = Theme.layout.sidebar
     @Environment(AppState.self) private var app
     @Environment(FleetStore.self) private var store
     @State private var collapsed: Set<String> = []
@@ -86,7 +87,7 @@ struct SidebarView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 13).padding(.vertical, Theme.space.x2_5)
         }
-        .frame(width: Theme.layout.sidebar)
+        .frame(width: width)
         .background(ColorPalette.ink900)
         .overlay(alignment: .trailing) { Rectangle().fill(Theme.color.border).frame(width: 1) }
     }
@@ -145,6 +146,7 @@ private struct SidebarRow: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm))
         .overlay(RoundedRectangle(cornerRadius: Theme.radius.sm).strokeBorder(selected ? Theme.color.borderStrong : .clear, lineWidth: 1))
         .contentShape(Rectangle())
+        .help(repo.name)
         .opacity(store.isIgnored(repo.id) ? 0.45 : 1)
         .onHover { hover = $0 }
         .onTapGesture(perform: onSelect)
