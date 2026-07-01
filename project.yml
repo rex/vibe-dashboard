@@ -1,0 +1,89 @@
+name: VibeDashboard
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: '14.0'
+  bundleIdPrefix: com.piercemoore
+
+settingGroups:
+  common:
+    SWIFT_VERSION: '6.0'
+    SWIFT_STRICT_CONCURRENCY: complete
+    CODE_SIGN_STYLE: Automatic
+    # Placeholders — overridden by Scripts/generate-build-info.sh at build time.
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1
+
+packages:
+  Yams:
+    url: https://github.com/jpsim/Yams.git
+    from: 5.1.3
+
+targets:
+  # ============================================================
+  # macOS app — a local developer tool. NOT sandboxed (reads
+  # ~/Code, shells out to git/make); not App Store distributed.
+  # ============================================================
+  VibeDashboard:
+    type: application
+    platform: macOS
+    deploymentTarget: '14.0'
+    preBuildScripts:
+      - script: |
+          cd "$SRCROOT"
+          BUILDINFO_APP_DIR=VibeDashboard ./Scripts/generate-build-info.sh
+        name: Generate BuildInfo.swift
+        outputFiles:
+          - $(SRCROOT)/VibeDashboard/Generated/BuildInfo.swift
+        basedOnDependencyAnalysis: false
+    sources:
+      - path: VibeDashboard
+        excludes:
+          - "**/AGENTS.md"
+          - "**/README.md"
+          - "**/CLAUDE.md"
+          - "**/GEMINI.md"
+          - "**/.DS_Store"
+      - path: VibeDashboard/Generated/BuildInfo.swift
+        type: file
+        optional: true
+      - path: VibeDashboard/PrivacyInfo.xcprivacy
+        type: file
+      - path: Shared
+        excludes:
+          - "**/AGENTS.md"
+          - "**/README.md"
+          - "**/.DS_Store"
+    settings:
+      groups: [common]
+      PRODUCT_BUNDLE_IDENTIFIER: com.piercemoore.vibe
+      PRODUCT_NAME: VibeDashboard
+      INFOPLIST_FILE: VibeDashboard/Info.plist
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      CODE_SIGN_ENTITLEMENTS: VibeDashboard/VibeDashboard.entitlements
+      LSAPPLICATIONCATEGORYTYPE: public.app-category.developer-tools
+      ENABLE_HARDENED_RUNTIME: 'YES'
+      COMBINE_HIDPI_IMAGES: 'YES'
+    dependencies:
+      - package: Yams
+    scheme:
+      testTargets:
+        - VibeDashboardTests
+      gatherCoverageData: true
+
+  # ============================================================
+  # Unit tests (Swift Testing).
+  # ============================================================
+  VibeDashboardTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: '14.0'
+    sources:
+      - path: Tests/VibeDashboardTests
+    settings:
+      groups: [common]
+      PRODUCT_BUNDLE_IDENTIFIER: com.piercemoore.vibe.tests
+      GENERATE_INFOPLIST_FILE: 'YES'
+    dependencies:
+      - target: VibeDashboard

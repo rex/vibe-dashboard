@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# pre-commit-bumper.sh — auto-bump VERSION::MINOR_BASE on every commit.
+#
+# Install as .githooks/pre-commit and activate per-checkout:
+#   git config core.hooksPath .githooks
+#
+# Three cases:
+#   (1) VERSION is ALREADY staged for this commit  → skip (no double bump).
+#   (2) VERSION is modified-but-unstaged           → stage as-is (manual MAJOR bump).
+#   (3) VERSION is clean                           → increment MINOR_BASE by 1.
+
+set -euo pipefail
+
+if ! [[ -f VERSION ]]; then
+    # No VERSION file yet; nothing to do.
+    exit 0
+fi
+
+# Case 1: VERSION already staged. Leave alone.
+if git diff --cached --name-only | grep -qx VERSION; then
+    exit 0
+fi
+
+# Case 2: VERSION modified unstaged. Stage it (a manual MAJOR bump).
+if ! git diff --quiet -- VERSION; then
+    git add VERSION
+    exit 0
+fi
+
+# Case 3: VERSION clean. Bump MINOR_BASE by 1.
+awk -F= '
+    /^MAJOR=/ { print; next }
+    /^MINOR_BASE=/ { printf "MINOR_BASE=%d\n", $2 + 1; next }
+    { print }
+' VERSION > VERSION.tmp && mv VERSION.tmp VERSION
+
+git add VERSION

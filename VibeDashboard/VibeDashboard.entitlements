@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- App Sandbox is intentionally DISABLED.
+         Vibe is a local developer tool: it reads arbitrary repositories
+         under ~/Code and shells out to `git` and `make`. Those operations
+         are incompatible with the App Sandbox. Vibe is notarized-and-
+         distributed-directly, never through the Mac App Store. -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+
+    <!-- Outbound network (future: fetch remote CI status, push notifications). -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

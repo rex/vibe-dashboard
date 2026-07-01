@@ -1,0 +1,84 @@
+kind: vibe-policy
+schema_version: 1
+
+project:
+  name: vibe-dashboard
+  lifecycle: greenfield
+  stack: swift-apple
+  description: >-
+    Native macOS app — realtime oversight of a fleet of agentic-skeleton repos
+    and the coding agents editing them.
+
+stack:
+  language: swift
+  package_manager: spm
+  framework: swiftui
+  validation: xcodebuild
+  clients: [macos]
+
+architecture:
+  check_command: make check-architecture
+  scope_globs:
+    - "VibeDashboard/**/*.swift"
+    - "Shared/**/*.swift"
+    - "Tests/**/*.swift"
+  exclude_globs:
+    - "**/Generated/**"
+  max_lines_per_file:
+    soft: 250
+    hard: 400
+  max_public_functions_per_module: 8
+
+quality_gates:
+  lint:
+    required: false          # swiftlint advisory until baseline is clean
+  typecheck:
+    required: true           # the Swift compiler is the typechecker
+  tests:
+    mode: required
+    coverage:
+      measurement: line
+      minimum_percentage: 40  # greenfield floor; raise as suites land
+  clean_worktree_required_on_completion: true
+
+security:
+  destructive_confirmation: required   # every filesystem write is a confirm-gated sheet
+  audit_logging: recommended
+
+workflow:
+  signed_commits_required: true
+  commit_per_logical_step: true
+  push_after_each_commit_if_remote_exists: true
+  validation_command: make validate
+  final_verification_command: make validate
+  ask_before_dockerizing: true
+
+docs:
+  agents_md_required: true
+  claude_md_required: true
+  task_state_required: true
+  vibe_yaml_required: true
+
+apple:
+  swift_version: '6.0'
+  strict_concurrency: complete
+  deployment_target:
+    macOS: '14.0'
+  project_generator: xcodegen
+  sandboxed: false
+  privacy_manifest_required: true
+  no_cocoapods: true
+
+deployment:
+  dockerized: false
+
+decisions:
+  - id: no-sandbox
+    what: App Sandbox disabled — the scanner reads ~/Code and runs git/make.
+    when: '2026-07-01'
+  - id: real-scan
+    what: Ships a live filesystem/git scanner (not mock data) driving the UI.
+    when: '2026-07-01'
+  - id: yaml-parser
+    what: Yams (SPM) parses each repo's VIBE.yaml for the policy inspector.
+    when: '2026-07-01'
