@@ -13,6 +13,7 @@ struct SkillEvidence: Sendable, Hashable, Identifiable {
     var skillId: String
     var count: Int
     var lastSeen: String   // YYYY-MM-DD
+    var source: String = "transcript"   // "transcript" | "AgentsView" | both
     var id: String { repoPath + "·" + skillId }
 }
 
@@ -29,10 +30,32 @@ enum TranscriptProbe {
         return v.isEmpty ? nil : v
     }
 
+    /// Union of on-disk transcripts + the AgentsView index (which reaches months
+    /// further back and catches repos whose on-disk transcripts were rotated away).
     static func scan() async -> [SkillEvidence] {
+        async let disk = diskScan()
+        async let agentsView = AgentsViewProbe.scan()
+        let combined = await disk + agentsView
+        return merge(combined)
+    }
+
+    private static func diskScan() async -> [SkillEvidence] {
         await withCheckedContinuation { (cont: CheckedContinuation<[SkillEvidence], Never>) in
             DispatchQueue.global(qos: .userInitiated).async { cont.resume(returning: scanSync()) }
         }
+    }
+
+    /// Fold duplicate (cwd, skill) evidence from both sources into one row.
+    private static func merge(_ all: [SkillEvidence]) -> [SkillEvidence] {
+        var agg: [String: SkillEvidence] = [:]
+        for e in all {
+            guard var x = agg[e.id] else { agg[e.id] = e; continue }
+            x.count += e.count
+            if e.lastSeen > x.lastSeen { x.lastSeen = e.lastSeen }
+            if !x.source.contains(e.source) { x.source += " + " + e.source }
+            agg[e.id] = x
+        }
+        return Array(agg.values)
     }
 
     private static func scanSync() -> [SkillEvidence] {

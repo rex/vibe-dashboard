@@ -112,7 +112,7 @@ private struct BackfillRow: View {
                     Text("→ \(version ?? "no version")")
                         .font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textFaint)
                 }
-                Text("\(match.repo.name) · last run \(match.ev.lastSeen)")
+                Text("\(match.repo.name) · last run \(match.ev.lastSeen) · via \(match.ev.source)")
                     .font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textMuted).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
