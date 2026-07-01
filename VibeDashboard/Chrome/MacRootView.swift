@@ -27,6 +27,7 @@ struct MacRootView: View {
             ToastStack(toasts: app.toasts) { app.dismissToast($0) }
         }
         .background(Theme.color.bgVoid)
+        .background(WindowConfigurator())
         .overlay { OverlayHost() }
     }
 

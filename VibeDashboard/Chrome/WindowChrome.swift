@@ -3,15 +3,21 @@
 import SwiftUI
 import AppKit
 
-/// A transparent region that drags the window (for the custom toolbar under
-/// a hidden title bar). Controls placed on top still receive their own clicks.
-struct WindowDragArea: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { DragView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-    private final class DragView: NSView {
-        override var mouseDownCanMoveWindow: Bool { true }
-        override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
+/// Makes the window draggable by its background (empty chrome regions) without
+/// hijacking clicks on SwiftUI controls — the correct approach under a hidden
+/// title bar. Applied once at the root.
+struct WindowConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        DispatchQueue.main.async {
+            guard let w = v.window else { return }
+            w.isMovableByWindowBackground = true
+            w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+        }
+        return v
     }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 /// NSVisualEffectView wrapper for the sanctioned whisper of vibrancy.

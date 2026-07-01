@@ -34,6 +34,7 @@ struct RepoBuildTab: View {
 
 private struct MakefilePanel: View {
     @Environment(AppState.self) private var app
+    @Environment(FleetStore.self) private var store
     let repo: Repo
 
     private var groups: [(kind: TargetKind, label: String, items: [MakeTarget])] {
@@ -56,8 +57,7 @@ private struct MakefilePanel: View {
                         GroupHeader(label: group.label, count: group.items.count, first: idx == 0)
                         ForEach(group.items) { target in
                             TargetRow(repo: repo, target: target) {
-                                app.openConsole(.shell)
-                                app.toast("make " + target.name, repo.name, .info)
+                                app.runTarget(repo, target.name, host: store.fleet.scanner.host)
                             }
                         }
                     }

@@ -53,7 +53,6 @@ struct ToolbarView: View {
         .frame(maxWidth: .infinity)
         .background(ColorPalette.ink850)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.color.border).frame(height: 1) }
-        .background(WindowDragArea())
     }
 
     private func navWithCounts(_ t: FleetTotals) -> [SegOption<AppView>] {
