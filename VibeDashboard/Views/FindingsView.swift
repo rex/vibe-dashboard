@@ -101,7 +101,7 @@ struct FindingsTable: View {
     let findings: [Finding]
 
     var body: some View {
-        VStack(spacing: 0) {
+        LazyVStack(spacing: 0) {
             ForEach(findings) { f in
                 FindingRow(finding: f)
             }

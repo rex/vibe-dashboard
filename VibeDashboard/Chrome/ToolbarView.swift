@@ -22,13 +22,10 @@ struct ToolbarView: View {
         let navBinding = Binding<AppView>(get: { app.view }, set: { app.goView($0) })
 
         HStack(spacing: Theme.space.x3) {
-            Color.clear.frame(width: 72)   // native traffic lights
+            Color.clear.frame(width: 80)   // native traffic lights (centered by WindowConfigurator)
 
-            HStack(spacing: Theme.space.x2) {
-                VibeMark(size: 20)
-                Wordmark(size: 15)
-            }
-            Rectangle().fill(Theme.color.border).frame(width: 1, height: 22)
+            Wordmark(size: 22)
+            Rectangle().fill(Theme.color.border).frame(width: 1, height: 20)
 
             HStack(spacing: 2) {
                 toolIcon("chevron-left", enabled: inRepo) { app.back() }
@@ -55,7 +52,7 @@ struct ToolbarView: View {
             }
         }
         .padding(.horizontal, Theme.space.x3_5safe)
-        .frame(height: 52)
+        .frame(height: 46)
         .frame(maxWidth: .infinity)
         .background(ColorPalette.ink850)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.color.border).frame(height: 1) }

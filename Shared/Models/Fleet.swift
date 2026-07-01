@@ -94,18 +94,18 @@ struct Fleet: Sendable {
         f.autopilot = autopilot
         f.skillCatalog = catalog
         f.byId = Dictionary(uniqueKeysWithValues: repos.map { ($0.id, $0) })
-        f.leaves = repos.filter { $0.kind != .workspace }
-        f.workspaces = repos.filter { $0.kind == .workspace }
+        let byName: (Repo, Repo) -> Bool = { $0.name.lowercased() < $1.name.lowercased() }
+        f.leaves = repos.filter { $0.kind != .workspace }.sorted(by: byName)
+        f.workspaces = repos.filter { $0.kind == .workspace }.sorted(by: byName)
 
-        // nested tree: workspaces + children, then top-level orphans
+        // nested tree: workspaces (alpha) + their children (alpha), then top-level repos (alpha).
         var tree: [TreeNode] = []
         for ws in f.workspaces {
             tree.append(TreeNode(repoId: ws.id, depth: 0))
-            for cid in ws.children where f.byId[cid] != nil {
-                tree.append(TreeNode(repoId: cid, depth: 1))
-            }
+            let kids = ws.children.compactMap { f.byId[$0] }.sorted(by: byName)
+            for c in kids { tree.append(TreeNode(repoId: c.id, depth: 1)) }
         }
-        for r in repos where r.kind != .workspace && r.parentId == nil {
+        for r in f.leaves where r.parentId == nil {
             tree.append(TreeNode(repoId: r.id, depth: 0))
         }
         f.tree = tree

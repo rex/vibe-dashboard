@@ -45,6 +45,22 @@ struct FleetScanner: Sendable {
         var childrenOf: [String: [String]] = [:]
         for r in repos { if let p = r.parentId { childrenOf[p, default: []].append(r.id) } }
 
+        // Owner filter: keep only repos whose origin I own (github acme/acme-labs/widgets
+        // or gitea git.example.com), plus the workspace ancestors of owned repos.
+        var owned = Set(repos.filter { isOwned($0) }.map { $0.id })
+        var grew = true
+        while grew {
+            grew = false
+            for r in repos where owned.contains(r.id) {
+                if let p = r.parentId, !owned.contains(p) { owned.insert(p); grew = true }
+            }
+        }
+        if !owned.isEmpty {
+            repos = repos.filter { owned.contains($0.id) }
+            childrenOf = [:]
+            for r in repos { if let p = r.parentId { childrenOf[p, default: []].append(r.id) } }
+        }
+
         // Live agent sessions → attach to the deepest matching repo.
         let sessions = await AgentProbe.sessions()
         for s in sessions {
@@ -125,6 +141,18 @@ struct FleetScanner: Sendable {
     /// Cheap check (no probing) for whether a repo is agentic/managed.
     private func isManagedMarker(_ abs: String) -> Bool {
         ["/VIBE.yaml", "/AGENTS.md", "/.claude", "/WORKSPACE.yaml"].contains { FleetScanner.fm.fileExists(atPath: abs + $0) }
+    }
+    /// Whether a repo's origin belongs to me (github acme/acme-labs/widgets or gitea git.example.com).
+    private func isOwned(_ r: Repo) -> Bool {
+        let owners = ["acme", "acme-labs", "widgets"]
+        for rem in r.scm.remotes {
+            let u = rem.url.lowercased()
+            if u.contains("git.example.com") { return true }
+            if u.contains("github.com") {
+                for o in owners where u.contains("github.com:\(o)/") || u.contains("github.com/\(o)/") { return true }
+            }
+        }
+        return false
     }
     private func isDir(_ path: String) -> Bool {
         var d: ObjCBool = false

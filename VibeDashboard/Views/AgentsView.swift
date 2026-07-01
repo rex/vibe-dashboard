@@ -63,14 +63,10 @@ struct AgentsView: View {
                 header(t)
                 WorkingNowSection(sessions: sessions)
                 HStack(alignment: .top, spacing: Theme.space.x4) {
-                    WorktreeSprawlPanel(sprawl: sprawl, abandoned: t.abandonedWorktrees)
-                        .layoutPriority(1.25)
-                    VStack(spacing: Theme.space.x4) {
-                        DocBloatPanel(repos: bloat)
-                        ChangelogStalenessPanel(repos: stale)
-                    }
-                    .layoutPriority(1)
+                    DocBloatPanel(repos: bloat).frame(maxWidth: .infinity, alignment: .top)
+                    ChangelogStalenessPanel(repos: stale).frame(maxWidth: .infinity, alignment: .top)
                 }
+                WorktreeSprawlPanel(sprawl: sprawl, abandoned: t.abandonedWorktrees)
             }
             .padding(Theme.space.x5)
         }

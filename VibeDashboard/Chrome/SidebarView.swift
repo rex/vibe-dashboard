@@ -1,6 +1,7 @@
 // SidebarView.swift — the source list: nested workspace tree + scanner footer.
 
 import SwiftUI
+import AppKit
 
 struct SidebarView: View {
     @Environment(AppState.self) private var app
@@ -15,7 +16,8 @@ struct SidebarView: View {
         for ws in f.workspaces {
             out.append(RowItem(repo: ws, depth: 0, hasChildren: true))
             if !collapsed.contains(ws.id) {
-                for cid in ws.children { if let c = f.byId[cid] { out.append(RowItem(repo: c, depth: 1, hasChildren: false)) } }
+                let kids = ws.children.compactMap { f.byId[$0] }.sorted { $0.name.lowercased() < $1.name.lowercased() }
+                for c in kids { out.append(RowItem(repo: c, depth: 1, hasChildren: false)) }
             }
         }
         for r in f.leaves where r.parentId == nil {
@@ -60,6 +62,19 @@ struct SidebarView: View {
             }
 
             Divider().overlay(Theme.color.border)
+            if store.ignoredCount > 0 || store.showIgnored {
+                Button { store.toggleShowIgnored() } label: {
+                    HStack(spacing: Theme.space.x1_5) {
+                        VibeIcon(store.showIgnored ? "eye" : "eye-off", size: 12, color: Theme.color.textMuted)
+                        Text(store.showIgnored ? "hide ignored" : "show ignored · \(store.ignoredCount)")
+                            .font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textMuted)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 13).padding(.top, Theme.space.x2)
+            }
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: Theme.space.x2) {
                     VibeIcon("radar", size: 13, color: Theme.color.ok)
@@ -89,6 +104,7 @@ private struct SidebarRow: View {
     let selected: Bool
     var onSelect: () -> Void
     var onToggle: () -> Void
+    @Environment(FleetStore.self) private var store
     @State private var hover = false
 
     var body: some View {
@@ -129,7 +145,18 @@ private struct SidebarRow: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm))
         .overlay(RoundedRectangle(cornerRadius: Theme.radius.sm).strokeBorder(selected ? Theme.color.borderStrong : .clear, lineWidth: 1))
         .contentShape(Rectangle())
+        .opacity(store.isIgnored(repo.id) ? 0.45 : 1)
         .onHover { hover = $0 }
         .onTapGesture(perform: onSelect)
+        .contextMenu {
+            Button(store.isIgnored(repo.id) ? "Show in fleet" : "Ignore repo") { store.toggleIgnore(repo.id) }
+            Divider()
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: (repo.absolutePath as NSString).expandingTildeInPath)
+            }
+            Button("Open in editor") {
+                NSWorkspace.shared.open(URL(fileURLWithPath: (repo.absolutePath as NSString).expandingTildeInPath))
+            }
+        }
     }
 }

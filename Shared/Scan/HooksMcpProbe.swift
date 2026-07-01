@@ -39,20 +39,26 @@ enum HooksMcpProbe {
     }
 
     private static func classify(_ cmd: String, abs: String) -> HookStatus {
-        // A command that points at a script file we can inspect.
-        if let scriptRel = cmd.split(separator: " ").map(String.init).first(where: { $0.contains("/") && $0.hasSuffix(".sh") }) {
-            let rel = scriptRel.replacingOccurrences(of: "$CLAUDE_PROJECT_DIR/", with: "")
-            let path = rel.hasPrefix("/") ? rel : join(abs, rel)
-            guard fm.fileExists(atPath: path) else { return .missing }
-            if let data = fm.contents(atPath: path), data.count < 240 {
-                let body = String(decoding: data, as: UTF8.self)
-                let meaningful = body.split(separator: "\n").filter {
-                    let t = $0.trimmingCharacters(in: .whitespaces)
-                    return !t.isEmpty && !t.hasPrefix("#") && !t.hasPrefix("echo") && t != "exit 0"
-                }
-                if meaningful.count <= 1 { return .nothing }   // stub
-            }
+        // Inline command (ruff / pre-commit / swiftformat …) — enforces something.
+        guard let token = cmd.split(whereSeparator: { $0 == " " }).map(String.init).first(where: { $0.contains(".sh") }) else {
             return .active
+        }
+        // Resolve the script path: strip quotes, expand $CLAUDE_PROJECT_DIR / ~, make absolute.
+        var p = token.replacingOccurrences(of: "\"", with: "").replacingOccurrences(of: "'", with: "")
+        p = p.replacingOccurrences(of: "${CLAUDE_PROJECT_DIR}", with: abs)
+             .replacingOccurrences(of: "$CLAUDE_PROJECT_DIR", with: abs)
+        if p.hasPrefix("~") { p = (p as NSString).expandingTildeInPath }
+        if !p.hasPrefix("/") { p = join(abs, p) }
+        // An unexpanded variable we can't verify — don't cry wolf.
+        if p.contains("$") { return .active }
+        guard fm.fileExists(atPath: p) else { return .missing }
+        if let data = fm.contents(atPath: p), data.count < 240 {
+            let body = String(decoding: data, as: UTF8.self)
+            let meaningful = body.split(separator: "\n").filter {
+                let t = $0.trimmingCharacters(in: .whitespaces)
+                return !t.isEmpty && !t.hasPrefix("#") && !t.hasPrefix("echo") && t != "exit 0" && !t.hasPrefix("set ")
+            }
+            if meaningful.count <= 1 { return .nothing }   // stub
         }
         return .active
     }
