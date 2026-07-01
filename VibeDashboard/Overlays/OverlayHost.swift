@@ -62,6 +62,8 @@ struct OverlayHost: View {
             if let req = app.pendingExclude, let r = store.fleet.repo(req.repoId) {
                 ExcludeSheet(repo: r, path: req.path)
             }
+        case .backfillSkills:
+            BackfillSheet()
         }
     }
 }

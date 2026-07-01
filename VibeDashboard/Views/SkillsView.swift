@@ -73,10 +73,25 @@ struct SkillsView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: Theme.space.x1_5) {
-            Text("Skills")
-                .font(VibeFont.sans(VibeFont.size.xxl, .semibold))
-                .tracking(VibeFont.size.xxl * VibeFont.track.snug)
-                .foregroundStyle(Theme.color.textBright)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Skills")
+                    .font(VibeFont.sans(VibeFont.size.xxl, .semibold))
+                    .tracking(VibeFont.size.xxl * VibeFont.track.snug)
+                    .foregroundStyle(Theme.color.textBright)
+                Spacer()
+                Button { app.openSheet(.backfillSkills) } label: {
+                    HStack(spacing: 6) {
+                        VibeIcon("history", size: 13, color: Theme.color.accent)
+                        Text("Backfill from transcripts")
+                            .font(VibeFont.mono(VibeFont.size.xs, .medium)).foregroundStyle(Theme.color.textPrimary)
+                    }
+                    .padding(.horizontal, 10).frame(height: 28)
+                    .background(Theme.color.surfaceRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.radius.sm).strokeBorder(Theme.color.borderStrong, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
             Text("skeleton, lang & tool coverage across every repo under \(store.fleet.scanner.root).")
                 .font(VibeFont.mono(VibeFont.size.sm))
                 .foregroundStyle(Theme.color.textSecondary)

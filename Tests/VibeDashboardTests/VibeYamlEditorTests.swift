@@ -103,6 +103,24 @@ struct VibeYamlEditorTests {
         #expect(after == broken)   // left byte-for-byte untouched
     }
 
+    @Test("records a skill by creating a top-level skills: block")
+    func recordSkillNew() {
+        let path = tempVibe(blockStyle)
+        let result = VibeYamlEditor.recordSkill(vibePath: path, id: "lang-swift-apple", version: "0.3.0", applied: "2026-07-01")
+        #expect(result == .skillRecorded(id: "lang-swift-apple"))
+        #expect(VibeYamlEditor.currentSkillIds(vibePath: path) == ["lang-swift-apple"])
+    }
+
+    @Test("appends to an existing skills: block and stays idempotent")
+    func recordSkillAppend() {
+        let path = tempVibe(blockStyle + "\nskills:\n  - id: tool-ci\n    version: \"0.1.0\"\n    applied: 2026-06-01\n")
+        let first = VibeYamlEditor.recordSkill(vibePath: path, id: "lang-python", version: "0.1.0", applied: "2026-07-01")
+        #expect(first == .skillRecorded(id: "lang-python"))
+        #expect(Set(VibeYamlEditor.currentSkillIds(vibePath: path)) == ["tool-ci", "lang-python"])
+        let again = VibeYamlEditor.recordSkill(vibePath: path, id: "tool-ci", version: "0.1.0", applied: "2026-07-01")
+        #expect(again == .alreadyRecorded)
+    }
+
     @Test("refuses when there is no architecture section")
     func refusesNoArchitecture() {
         let src = "project:\n  name: x\nworkflow:\n  signed_commits_required: true\n"

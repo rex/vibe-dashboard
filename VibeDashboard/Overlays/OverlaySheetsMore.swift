@@ -156,6 +156,7 @@ struct ExcludeSheet: View {
                 app.toast("VIBE.yaml won't parse", "refusing to edit a file that doesn't already parse", .danger)
             case .unsafe(let why):
                 app.toast("left untouched", why, .danger)
+            default: break   // skill-record results can't arise from addExcludeGlob
             }
         }
     }

@@ -6,7 +6,7 @@ enum AppView: String, Hashable, CaseIterable { case fleet, agents, findings, ski
 enum ConsoleTab: String, Hashable, CaseIterable { case output, shell, activity }
 
 enum SheetKind: String, Identifiable, Hashable {
-    case about, reconcile, commit, prune, waiver, applySkill, installHooks, palette, excludeFile
+    case about, reconcile, commit, prune, waiver, applySkill, installHooks, palette, excludeFile, backfillSkills
     var id: String { rawValue }
 }
 

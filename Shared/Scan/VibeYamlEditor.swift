@@ -14,6 +14,8 @@ enum VibeYamlEditor {
     enum Result: Equatable {
         case added(glob: String)
         case alreadyExcluded
+        case skillRecorded(id: String)
+        case alreadyRecorded
         case noVibe
         case parseError
         case unsafe(String)   // couldn't edit safely — original untouched
@@ -78,6 +80,60 @@ enum VibeYamlEditor {
         return .added(glob: glob)
     }
 
+    /// Record an applied skill into VIBE.yaml's top-level `skills:` block. Same
+    /// paranoid contract as addExcludeGlob — verified, backed-up, atomic, and it
+    /// refuses to write anything it can't re-parse.
+    static func recordSkill(vibePath: String, id: String, version: String?, applied: String) -> Result {
+        guard let original = try? String(contentsOfFile: vibePath, encoding: .utf8) else { return .noVibe }
+        guard let parsed = (try? Yams.load(yaml: original)) as? [String: Any] else { return .parseError }
+        if recordedSkillIds(parsed).contains(id) { return .alreadyRecorded }
+
+        let usesCRLF = original.contains("\r\n")
+        let normalized = usesCRLF ? original.replacingOccurrences(of: "\r\n", with: "\n") : original
+        var lines = normalized.components(separatedBy: "\n")
+
+        var entry = ["  - id: \(id)"]
+        if let version { entry.append("    version: \"\(version)\"") }
+        entry.append("    applied: \(applied)")
+        entry.append("    source: transcript-backfill")
+
+        if let skIdx = lines.firstIndex(where: { isTopKey($0, "skills") }) {
+            let after = inlineValue(lines[skIdx])
+            if after == "[]" { lines[skIdx] = "skills:" } else if !after.isEmpty {
+                return .unsafe("skills is inline — edit it by hand")
+            }
+            var blockEnd = lines.count
+            for i in (skIdx + 1)..<lines.count where isTopKeyLine(lines[i]) { blockEnd = i; break }
+            var insertAt = skIdx + 1
+            for i in (skIdx + 1)..<blockEnd where isListItemLine(lines[i]) || indentOf(lines[i]) > 0 { insertAt = i + 1 }
+            lines.insert(contentsOf: entry, at: insertAt)
+        } else {
+            while lines.last?.isEmpty == true { lines.removeLast() }
+            lines.append("skills:")
+            lines.append(contentsOf: entry)
+        }
+
+        var newText = lines.joined(separator: "\n")
+        if !newText.hasSuffix("\n") { newText += "\n" }
+        if usesCRLF { newText = newText.replacingOccurrences(of: "\n", with: "\r\n") }
+        // VERIFY: parses AND now records this skill id.
+        guard let re = (try? Yams.load(yaml: newText)) as? [String: Any],
+              recordedSkillIds(re).contains(id) else {
+            return .unsafe("edit did not validate — VIBE.yaml left untouched")
+        }
+        try? original.write(toFile: vibePath + ".bak", atomically: true, encoding: .utf8)
+        do { try newText.write(toFile: vibePath, atomically: true, encoding: .utf8) } catch {
+            return .unsafe("write failed: \(error.localizedDescription)")
+        }
+        return .skillRecorded(id: id)
+    }
+
+    private static func recordedSkillIds(_ dict: [String: Any]) -> [String] {
+        if let maps = dict["skills"] as? [[String: Any]] { return maps.compactMap { $0["id"] as? String } }
+        if let ids = dict["skills"] as? [String] { return ids }
+        return []
+    }
+
     /// The globs currently excluded (for showing the user before/after).
     static func currentExcludes(vibePath: String) -> [String] {
         guard let text = try? String(contentsOfFile: vibePath, encoding: .utf8),
@@ -85,6 +141,13 @@ enum VibeYamlEditor {
               let arch = dict["architecture"] as? [String: Any],
               let globs = arch["exclude_globs"] as? [String] else { return [] }
         return globs
+    }
+
+    /// The skill ids a repo currently records in VIBE.yaml.
+    static func currentSkillIds(vibePath: String) -> [String] {
+        guard let text = try? String(contentsOfFile: vibePath, encoding: .utf8),
+              let dict = (try? Yams.load(yaml: text)) as? [String: Any] else { return [] }
+        return recordedSkillIds(dict)
     }
 
     // ---- line helpers (indentation-aware, comment/format preserving) ----
