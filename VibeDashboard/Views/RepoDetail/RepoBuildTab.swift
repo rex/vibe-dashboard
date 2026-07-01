@@ -20,10 +20,11 @@ struct RepoBuildTab: View {
                     .tracking(VibeFont.size.xxl * VibeFont.track.snug)
                     .foregroundStyle(Theme.color.textBright)
 
-                MakefilePanel(repo: repo)
                 ScmPanel(scm: repo.scm)
                 CiPanel(ci: repo.ci)
                 ContainersPanel(containers: repo.containers)
+                MakefilePanel(repo: repo)   // last — the target list is often enormous
+
             }
             .padding(Theme.space.x5)
         }

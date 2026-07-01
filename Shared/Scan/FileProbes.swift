@@ -55,28 +55,36 @@ enum FileProbes {
         (try? fm.contentsOfDirectory(atPath: abs))?.contains { $0.hasSuffix(ext) } ?? false
     }
 
-    // ---- line census ----
-    static func census(_ abs: String, soft: Int, hard: Int, ansible: Bool) -> Census {
+    // ---- line census + free hygiene facts (one walk, one read per file) ----
+    struct WalkResult: Sendable { var census = Census(); var conflicts: [String] = []; var junk: [String] = [] }
+
+    static func walk(_ abs: String, soft: Int, hard: Int, ansible: Bool) -> WalkResult {
+        var w = WalkResult()
         var c = Census()
         var files: [FileLines] = []
         let exts = ansible ? Reference.codeExtensions.union(Reference.ansibleExtensions) : Reference.codeExtensions
-        guard let en = fm.enumerator(at: URL(fileURLWithPath: abs), includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else { return c }
+        guard let en = fm.enumerator(at: URL(fileURLWithPath: abs),
+                                     includingPropertiesForKeys: [.isDirectoryKey],
+                                     options: [.skipsHiddenFiles]) else { w.census = c; return w }
         for case let url as URL in en {
             let name = url.lastPathComponent
             if skipDirs.contains(name) { en.skipDescendants(); continue }
+            let rel = url.path.replacingOccurrences(of: abs + "/", with: "")
+            if HygieneProbe.isJunkFile(name) { w.junk.append(rel) }
             guard exts.contains(url.pathExtension.lowercased()) else { continue }
             guard let data = try? Data(contentsOf: url) else { continue }
             let lines = data.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 } + 1
             c.scanned += 1
-            let rel = url.path.replacingOccurrences(of: abs + "/", with: "")
             if lines > soft { c.softCount += 1 }
             if lines > hard { c.godFiles.append(FileLines(path: rel, lines: lines)) }
+            if HygieneProbe.hasConflictMarkers(data) { w.conflicts.append(rel) }
             files.append(FileLines(path: rel, lines: lines))
             if c.scanned > 5000 { break }   // safety cap
         }
         c.godFiles.sort { $0.lines > $1.lines }
         c.largest = Array(files.sorted { $0.lines > $1.lines }.prefix(4))
-        return c
+        w.census = c
+        return w
     }
 
     // ---- doc bloat ----

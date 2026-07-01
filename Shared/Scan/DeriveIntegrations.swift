@@ -104,32 +104,53 @@ enum DeriveIntegrations {
                           notes: notes.isEmpty ? [Note(tone: .ok, text: "pinned, non-root, healthchecked")] : notes)
     }
 
+    // Skill usage is INFERRED from tech, because the skeleton records no per-repo
+    // skill manifest (a real hole — see SkeletonProbe). project.stack is free-form
+    // ("swift-apple" / "swift-macos" / "swift-ios-watchos"), so we detect by the
+    // actual stack family + files on disk rather than an exact string match — that
+    // brittle `== "swift-apple"` is why lang-swift-apple used to show "used by 1".
     static func skills(_ abs: String, vibe: [String: Any]?, stack: String) -> [SkillUse] {
         var out: [SkillUse] = []
-        let hasAgents = exists(join(abs, "AGENTS.md")) || exists(join(abs, "VIBE.yaml"))
-        if hasAgents {
+        let s = stack.lowercased()
+        func has(_ f: String) -> Bool { exists(join(abs, f)) }
+        func hasNs(_ k: String) -> Bool { vibe?[k] != nil }
+
+        if exists(join(abs, "AGENTS.md")) || exists(join(abs, "VIBE.yaml")) {
             var v: String? = nil
             if let sv = try? String(contentsOfFile: join(abs, ".claude/skeleton-version"), encoding: .utf8) {
                 v = sv.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            out.append(SkillUse(skillId: "agentic-skeleton", installed: v ?? "—", status: .ok))
+            out.append(SkillUse(skillId: "agentic-skeleton", installed: v, status: v == nil ? .drift : .ok,
+                                note: v == nil ? "not stamped — no .claude/skeleton-version" : nil))
         }
-        if stack.hasPrefix("python") || stack.contains("ansible") {
-            out.append(SkillUse(skillId: "lang-python", installed: "—", status: .ok))
+        // Any Apple/Swift repo, however its stack string is spelled.
+        let isSwift = ["swift", "apple", "ios", "macos", "watchos", "tvos", "xcode"].contains { s.contains($0) }
+            || has("Package.swift") || has("project.yml") || dirHasXcodeproj(abs)
+        if isSwift {
+            out.append(SkillUse(skillId: "lang-swift-apple", installed: nil, status: .ok,
+                                note: hasNs("apple") ? nil : "inferred from stack — no apple: namespace in VIBE.yaml"))
         }
-        if stack == "swift-apple" {
-            let hasApple = (vibe?["apple"] as? [String: Any]) != nil
-            out.append(SkillUse(skillId: "lang-swift-apple", installed: hasApple ? "—" : nil,
-                                status: hasApple ? .ok : .missing, note: hasApple ? nil : "swift stack, skill not applied"))
+        if s.contains("python") || s.contains("ansible") || has("pyproject.toml") || has("requirements.txt") {
+            out.append(SkillUse(skillId: "lang-python", installed: nil, status: .ok,
+                                note: hasNs("python") ? nil : "inferred from stack"))
         }
-        if stack == "python-fastmcp" { out.append(SkillUse(skillId: "lang-mcp", installed: "—", status: .ok)) }
-        if stack.contains("react") { out.append(SkillUse(skillId: "lang-react-spa", installed: "—", status: .ok)) }
-        if exists(join(abs, "Dockerfile")) { out.append(SkillUse(skillId: "lang-docker", installed: "—", status: .ok)) }
+        if s.contains("mcp") { out.append(SkillUse(skillId: "lang-mcp", installed: nil, status: .ok)) }
+        if s.contains("react") || s.contains("next") || s.contains("vite") || s.contains("spa") {
+            out.append(SkillUse(skillId: "lang-react-spa", installed: nil, status: .ok))
+        }
+        if s == "go" || s.hasPrefix("go-") || s.contains("golang") || has("go.mod") {
+            out.append(SkillUse(skillId: "lang-go", installed: nil, status: .ok))
+        }
+        if has("Dockerfile") { out.append(SkillUse(skillId: "lang-docker", installed: nil, status: .ok,
+                                                   note: hasNs("docker") ? nil : "Dockerfile present — no docker: namespace")) }
         if exists(join(abs, ".github/workflows")) || exists(join(abs, ".gitea/workflows")) {
-            let ciNs = (vibe?["ci"] != nil)
-            out.append(SkillUse(skillId: "tool-ci", installed: "—", status: ciNs ? .ok : .drift, note: ciNs ? nil : "no ci: namespace in VIBE.yaml"))
+            out.append(SkillUse(skillId: "tool-ci", installed: nil, status: hasNs("ci") ? .ok : .drift,
+                                note: hasNs("ci") ? nil : "no ci: namespace in VIBE.yaml"))
         }
         return out
+    }
+    private static func dirHasXcodeproj(_ abs: String) -> Bool {
+        (try? fm.contentsOfDirectory(atPath: abs))?.contains { $0.hasSuffix(".xcodeproj") } ?? false
     }
 
     static func build(_ abs: String, git: GitFacts) -> RepoBuild {

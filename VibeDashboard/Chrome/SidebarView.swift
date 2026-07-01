@@ -117,10 +117,21 @@ private struct SidebarRow: View {
             } else {
                 Color.clear.frame(width: 14)
             }
-            if repo.isWorkspace {
-                VibeIcon("folder-tree", size: 14, color: selected ? Theme.color.accent : Theme.color.textMuted)
-            } else {
-                LangGlyph(stack: repo.stack, size: 18, health: repo.health)
+            Group {
+                if repo.isWorkspace {
+                    VibeIcon("folder-tree", size: 14, color: selected ? Theme.color.accent : Theme.color.textMuted)
+                } else {
+                    LangGlyph(stack: repo.stack, size: 18, health: repo.health)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                // Iconic management indicator: repos slipping out of skeleton governance.
+                if !repo.isWorkspace && repo.management != .skeleton {
+                    Circle().fill(Theme.color.tone(repo.management.tone))
+                        .frame(width: 7, height: 7)
+                        .overlay(Circle().strokeBorder(ColorPalette.ink900, lineWidth: 1.5))
+                        .offset(x: 2, y: 2)
+                }
             }
             Text(repo.name)
                 .font(VibeFont.mono(VibeFont.size.sm, repo.isWorkspace ? .semibold : .regular))
@@ -146,7 +157,7 @@ private struct SidebarRow: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm))
         .overlay(RoundedRectangle(cornerRadius: Theme.radius.sm).strokeBorder(selected ? Theme.color.borderStrong : .clear, lineWidth: 1))
         .contentShape(Rectangle())
-        .help(repo.name)
+        .help(repo.isWorkspace || repo.management == .skeleton ? repo.name : "\(repo.name) · \(repo.management.label)")
         .opacity(store.isIgnored(repo.id) ? 0.45 : 1)
         .onHover { hover = $0 }
         .onTapGesture(perform: onSelect)

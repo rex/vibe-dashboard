@@ -104,6 +104,63 @@ struct InstallHooksSheet: View {
     }
 }
 
+// MARK: - Exclude-file sheet (the one write sheet that touches disk for real)
+
+struct ExcludeSheet: View {
+    @Environment(AppState.self) private var app
+    @Environment(FleetStore.self) private var store
+    let repo: Repo
+    let path: String
+
+    private var vibePath: String { (repo.absolutePath as NSString).expandingTildeInPath + "/VIBE.yaml" }
+    private var current: [String] { VibeYamlEditor.currentExcludes(vibePath: vibePath) }
+
+    var body: some View {
+        SheetShell(title: "Exclude from scope · \(repo.name)", icon: "file-code-2",
+                   width: OverlayLayout.sheetW, confirm: "Exclude file", confirmIcon: "circle-slash",
+                   confirmVariant: .danger) {
+            perform()
+        } content: {
+            VStack(alignment: .leading, spacing: Theme.space.x3) {
+                SheetProse(text: "adds this file to architecture.exclude_globs so check-architecture stops counting it. VIBE.yaml is edited in place — a .bak backup is written first and the result is re-parsed and verified before it's saved. if anything looks off, nothing is written.")
+                FileCard(caption: "add to exclude_globs") {
+                    FileRow(icon: "file-code-2", path: path, tone: .warn) {
+                        Text("+ exclude").font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.accent)
+                    }
+                }
+                if !current.isEmpty {
+                    FileCard(caption: "already excluded · \(current.count)") {
+                        ForEach(current, id: \.self) { g in
+                            FileRow(icon: "minus", path: g, tone: .neutral) { EmptyView() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func perform() {
+        app.closeSheet()
+        let target = vibePath, glob = path, name = repo.name
+        Task { @MainActor in
+            let result = await Task.detached { VibeYamlEditor.addExcludeGlob(vibePath: target, glob: glob) }.value
+            switch result {
+            case .added(let g):
+                app.toast("excluded from scope", "\(name) · VIBE.yaml + \(g)", .ok)
+                await store.rescan()
+            case .alreadyExcluded:
+                app.toast("already excluded", "\(glob) is already in exclude_globs", .info)
+            case .noVibe:
+                app.toast("no VIBE.yaml", "\(name) has no policy file to edit", .warn)
+            case .parseError:
+                app.toast("VIBE.yaml won't parse", "refusing to edit a file that doesn't already parse", .danger)
+            case .unsafe(let why):
+                app.toast("left untouched", why, .danger)
+            }
+        }
+    }
+}
+
 // MARK: - About sheet
 
 struct AboutSheet: View {

@@ -44,8 +44,21 @@ struct Census: Sendable, Hashable {
 }
 
 struct Drift: Sendable, Hashable {
-    var behind: String? = nil
+    var behind: String? = nil       // e.g. "3 minor behind" vs skeleton fleet-max
     var files: Int = 0
+    var version: String? = nil      // this repo's stamped .claude/skeleton-version
+    var latest: String? = nil       // newest skeleton-version seen across the fleet
+}
+
+/// "Classic vibe-coding shenanigans" a local scanner can catch that a policy
+/// file never will. Near-zero-false-positive facts only — alert fatigue is the
+/// enemy, so every field here must mean a real, actionable problem.
+struct Hygiene: Sendable, Hashable {
+    var conflictFiles: [String] = []   // files with live <<<<<<< merge-conflict markers
+    var junkFiles: [String] = []       // Finder dupes / .orig / .bak / .DS_Store on disk
+    var secretFiles: [String] = []     // tracked .env / *.pem / id_rsa — secrets in git
+    var trackedJunk: [String] = []     // node_modules / DerivedData / .venv committed to git
+    var stashCount: Int = 0            // forgotten `git stash` entries
 }
 
 struct AgentInfo: Sendable, Hashable {

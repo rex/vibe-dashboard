@@ -80,6 +80,9 @@ struct SkillsView: View {
             Text("skeleton, lang & tool coverage across every repo under \(store.fleet.scanner.root).")
                 .font(VibeFont.mono(VibeFont.size.sm))
                 .foregroundStyle(Theme.color.textSecondary)
+            Text("usage is inferred from each repo's stack + files — the skeleton records no per-repo skill manifest.")
+                .font(VibeFont.mono(VibeFont.size.xxs))
+                .foregroundStyle(Theme.color.textFaint)
         }
     }
 

@@ -58,6 +58,10 @@ struct OverlayHost: View {
             if let r = store.fleet.repo(app.selectedId) { InstallHooksSheet(repo: r) }
         case .waiver:
             WaiverSheet(repo: store.fleet.repo(app.selectedId))
+        case .excludeFile:
+            if let req = app.pendingExclude, let r = store.fleet.repo(req.repoId) {
+                ExcludeSheet(repo: r, path: req.path)
+            }
         }
     }
 }

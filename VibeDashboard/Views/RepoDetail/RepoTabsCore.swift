@@ -25,6 +25,9 @@ struct RepoOverviewTab: View {
                 AppWordmark(name: repo.name, desc: repo.desc, stack: repo.stack,
                             emblem: repo.emblem, live: repo.agentActive)
 
+                if repo.management != .skeleton { ManagementBanner(level: repo.management) }
+                OverviewAlerts(repo: repo)
+
                 HStack(alignment: .top, spacing: Theme.space.x4) {
                     VibePanel(title: "REPOSITORY") { metaRows }
                         .frame(maxWidth: RepoTabLayout.metaColumns)
@@ -52,10 +55,13 @@ struct RepoOverviewTab: View {
     @ViewBuilder private var metaRows: some View {
         VStack(spacing: 0) {
             MetaRow(key: "stack") { Text(repo.lang.label) }
+            MetaRow(key: "managed") { ManagedBadge(level: repo.management) }
             MetaRow(key: "lifecycle") { Text(repo.lifecycle) }
             MetaRow(key: "pm") { Text(repo.pm) }
             MetaRow(key: "framework") { Text(repo.framework) }
             MetaRow(key: "branch") { Text(repo.build.branch) }
+            MetaRow(key: "worktree") { WorktreeBadge(worktree: repo.worktree) }
+            MetaRow(key: "skeleton") { SkeletonBadge(drift: repo.drift) }
             MetaRow(key: "build") { Text(repo.build.version) }
             MetaRow(key: "commit") { Text(repo.build.commit) }
             MetaRow(key: "checked") { Text(repo.checked) }
@@ -125,7 +131,17 @@ struct RepoGatesTab: View {
 // MARK: - Census
 
 struct RepoCensusTab: View {
+    @Environment(AppState.self) private var app
     let repo: Repo
+
+    /// Right-click → exclude this file from architecture scope (confirm-gated write).
+    @ViewBuilder private func excludeMenu(_ path: String) -> some View {
+        if repo.vibePresent {
+            Button("Exclude from architecture scope") { app.requestExclude(repoId: repo.id, path: path) }
+        } else {
+            Text("no VIBE.yaml to edit")
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -165,6 +181,7 @@ struct RepoCensusTab: View {
                                     Text("\(f.lines) ln")
                                         .foregroundStyle(largestTone(f.lines))
                                 }
+                                .contextMenu { excludeMenu(f.path) }
                             }
                         }
                         .padding(.horizontal, Theme.space.x4)
@@ -184,6 +201,8 @@ struct RepoCensusTab: View {
                 .truncationMode(.middle)
             LimitBar(value: Double(f.lines), soft: 250, hard: 400, unit: " ln")
         }
+        .contentShape(Rectangle())
+        .contextMenu { excludeMenu(f.path) }
     }
 
     private func largestTone(_ lines: Int) -> Color {

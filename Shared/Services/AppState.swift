@@ -6,9 +6,12 @@ enum AppView: String, Hashable, CaseIterable { case fleet, agents, findings, ski
 enum ConsoleTab: String, Hashable, CaseIterable { case output, shell, activity }
 
 enum SheetKind: String, Identifiable, Hashable {
-    case about, reconcile, commit, prune, waiver, applySkill, installHooks, palette
+    case about, reconcile, commit, prune, waiver, applySkill, installHooks, palette, excludeFile
     var id: String { rawValue }
 }
+
+/// A pending "exclude this file from architecture scope" request, awaiting confirm.
+struct ExcludeRequest: Hashable { var repoId: String; var path: String }
 
 struct ShellEntry: Identifiable {
     let id = UUID()
@@ -30,6 +33,7 @@ final class AppState {
     var consoleOpen = false
     var consoleTab: ConsoleTab = .activity
     var sheet: SheetKind?
+    var pendingExclude: ExcludeRequest?
     var toasts: [ToastData] = []
     var shellLog: [ShellEntry] = []
     private var toastSeq = 0
@@ -62,6 +66,11 @@ final class AppState {
     func openConsole(_ tab: ConsoleTab? = nil) { consoleOpen = true; if let tab { consoleTab = tab }; persist() }
     func openSheet(_ k: SheetKind) { sheet = k }
     func closeSheet() { sheet = nil }
+    /// Ask to exclude a file from a repo's architecture scope (confirm-gated write).
+    func requestExclude(repoId: String, path: String) {
+        pendingExclude = ExcludeRequest(repoId: repoId, path: path)
+        openSheet(.excludeFile)
+    }
     func togglePalette() { sheet = (sheet == .palette) ? nil : .palette }
 
     @discardableResult

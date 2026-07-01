@@ -26,11 +26,19 @@ struct FleetScanner: Sendable {
             for c in candidates where c != m && m.hasPrefix(c + "/") { keepPaths.insert(c) }
         }
 
-        // Probe only the kept set concurrently.
+        // Probe the kept set with BOUNDED concurrency. Each probe spawns a fistful
+        // of git/lsof subprocesses; firing all repos at once spawns thousands and
+        // locks the machine (learned the hard way). Cap in-flight probes instead.
         var repos: [Repo] = await withTaskGroup(of: Repo.self) { group in
-            for abs in keepPaths { group.addTask { await probeRepo(abs, now: now) } }
+            let limit = 8
+            var it = keepPaths.makeIterator()
+            var started = 0
+            while started < limit, let abs = it.next() { group.addTask { await probeRepo(abs, now: now) }; started += 1 }
             var acc: [Repo] = []
-            for await r in group { acc.append(r) }
+            for await r in group {
+                acc.append(r)
+                if let abs = it.next() { group.addTask { await probeRepo(abs, now: now) } }
+            }
             return acc
         }
 
@@ -80,6 +88,9 @@ struct FleetScanner: Sendable {
                 repos[i].children = kids
             }
         }
+        // Real skeleton drift: the newest stamped skeleton-version across the fleet
+        // is the "latest" everything else is measured against.
+        let latestSkeleton = SkeletonProbe.latest(repos.compactMap { $0.drift.version })
         let byId = Dictionary(uniqueKeysWithValues: repos.map { ($0.id, $0) })
         for i in repos.indices {
             let signedReq = repos[i].signedRequired
@@ -92,6 +103,7 @@ struct FleetScanner: Sendable {
                 repos[i].stack = "workspace"
                 continue
             }
+            repos[i].drift = SkeletonProbe.drift(version: repos[i].drift.version, latest: latestSkeleton)
             repos[i].gates = Derive.gates(repos[i])
             repos[i].compliance = Derive.compliance(repos[i], signedRequired: signedReq)
             repos[i].health = Derive.health(repos[i], signedRequired: signedReq)
@@ -171,7 +183,8 @@ struct FleetScanner: Sendable {
         let idn = FileProbes.identity(abs, vibe: vibe)
         let git = await GitProbe.probe(abs, now: now)
         let (soft, hard) = limits(vibe)
-        let census = FileProbes.census(abs, soft: soft, hard: hard, ansible: idn.stack.contains("ansible"))
+        let walk = FileProbes.walk(abs, soft: soft, hard: hard, ansible: idn.stack.contains("ansible"))
+        let census = walk.census
         let docs = await FileProbes.docs(abs, now: now)
 
         var r = Repo(id: idFor(abs), name: (abs as NSString).lastPathComponent, path: displayPath(abs), absolutePath: abs)
@@ -192,12 +205,24 @@ struct FleetScanner: Sendable {
         r.skills = DeriveIntegrations.skills(abs, vibe: vibe, stack: idn.stack)
         r.build = DeriveIntegrations.build(abs, git: git)
         r.policy = vibe.map { PolicyProbe.sections($0) } ?? []
-        r.managed = FileProbes.exists(FileProbes.join(abs, "VIBE.yaml"))
+        r.hygiene = await HygieneProbe.probe(abs, conflicts: walk.conflicts, junk: walk.junk)
+        r.drift.version = SkeletonProbe.version(abs)
+        let vibePresent = FileProbes.exists(FileProbes.join(abs, "VIBE.yaml"))
+        r.vibePresent = vibePresent
+        r.managed = vibePresent
             || FileProbes.exists(FileProbes.join(abs, "AGENTS.md"))
             || FileProbes.exists(FileProbes.join(abs, ".claude"))
+        r.management = classifyManagement(vibePresent: vibePresent, parsed: vibe != nil, makefileCount: r.makefile.count)
         r.signedRequired = signedRequired(vibe)
         r.checked = "just now"
         return r
+    }
+
+    /// How completely the skeleton governs a repo (see ManagementLevel).
+    private func classifyManagement(vibePresent: Bool, parsed: Bool, makefileCount: Int) -> ManagementLevel {
+        guard vibePresent else { return .unmanaged }   // an agent has been here; no policy governs it
+        guard parsed else { return .partial }          // VIBE.yaml on disk but unparseable — broken policy
+        return makefileCount > 0 ? .skeleton : .partial // policy without a Makefile can't run its gates
     }
 
     private func limits(_ vibe: [String: Any]?) -> (Int, Int) {

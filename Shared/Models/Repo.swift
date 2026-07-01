@@ -4,6 +4,30 @@ import Foundation
 
 enum RepoKind: String, Sendable, Hashable { case repo, workspace }
 
+/// How thoroughly a repo is governed by the agentic skeleton. The whole point of
+/// this app is to surface the repos drifting *out* of management.
+enum ManagementLevel: String, Sendable, Hashable {
+    case skeleton    // VIBE.yaml + a Makefile — policy AND the machinery to enforce it
+    case partial     // VIBE.yaml present but no Makefile — policy nobody can run
+    case unmanaged   // no VIBE.yaml — an agent has been here, but nothing governs it
+
+    var label: String {
+        switch self {
+        case .skeleton: return "managed"
+        case .partial: return "partial"
+        case .unmanaged: return "UNMANAGED"
+        }
+    }
+    var tone: VibeTone {
+        switch self {
+        case .skeleton: return .ok
+        case .partial: return .warn
+        case .unmanaged: return .danger
+        }
+    }
+    var governed: Bool { self == .skeleton }
+}
+
 struct Repo: Identifiable, Sendable, Hashable {
     var id: String                       // stable, path-derived
     var name: String
@@ -20,6 +44,8 @@ struct Repo: Identifiable, Sendable, Hashable {
     var framework: String = "—"
     var desc: String = ""
     var managed: Bool = false      // has VIBE.yaml / AGENTS.md / .claude — an agentic repo
+    var vibePresent: Bool = false  // a VIBE.yaml file exists on disk (parseable or not)
+    var management: ManagementLevel = .skeleton   // how completely the skeleton governs it
     var signedRequired: Bool = false   // VIBE.yaml workflow.signed_commits_required
 
     // rollup
@@ -34,6 +60,7 @@ struct Repo: Identifiable, Sendable, Hashable {
     var worktree = WorktreeState()
     var census = Census()
     var drift = Drift()
+    var hygiene = Hygiene()
     var agent: AgentInfo? = nil
     var worktrees: [Worktree] = []
     var docs = Docs()
