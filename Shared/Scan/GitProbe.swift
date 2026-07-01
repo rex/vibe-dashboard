@@ -76,12 +76,11 @@ enum GitProbe {
 
     private static func worktrees(_ abs: String, now: Date) async -> [Worktree] {
         let r = await ProcessRunner.git(["worktree", "list", "--porcelain"], cwd: abs)
-        var out: [Worktree] = []
+        var pairs: [(path: String, branch: String)] = []
         var curPath: String? = nil
         var curBranch: String? = nil
         func flush() {
-            guard let p = curPath, p != abs, let br = curBranch else { curPath = nil; curBranch = nil; return }
-            out.append(makeWorktree(path: p, branch: br))
+            if let p = curPath, p != abs, let br = curBranch { pairs.append((p, br)) }
             curPath = nil; curBranch = nil
         }
         for ln in r.stdout.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -90,11 +89,28 @@ enum GitProbe {
             else if ln.isEmpty { flush() }
         }
         flush()
+
+        var out: [Worktree] = []
+        for pair in pairs {
+            out.append(await classify(path: pair.path, branch: pair.branch, now: now))
+        }
         return out
     }
 
-    /// Best-effort worktree life classification from age + commit count.
-    private static func makeWorktree(path: String, branch: String) -> Worktree {
-        Worktree(branch: branch, created: "—", lastCommit: "—", commits: 0, state: .stale)
+    /// Worktree life classification from last-commit age + unpushed commit count.
+    private static func classify(path: String, branch: String, now: Date) async -> Worktree {
+        var lastRel = "—"
+        var age: TimeInterval = 0
+        if let iso = await line(["log", "-1", "--format=%cI"], path), let d = ISO8601DateFormatter().date(from: iso) {
+            lastRel = RelTime.ago(d, now: now)
+            age = now.timeIntervalSince(d)
+        }
+        // Commits that exist only on this branch (not on any remote) — a proxy for unlanded work.
+        let commits = Int((await line(["rev-list", "--count", "HEAD", "--not", "--remotes"], path)) ?? "0") ?? 0
+        let days = age / 86_400
+        let state: WorktreeLife = (days < 2 && commits > 0) ? .active
+            : (commits == 0 && days > 14) ? .abandoned
+            : .stale
+        return Worktree(branch: branch, created: lastRel, lastCommit: lastRel, commits: commits, state: state)
     }
 }

@@ -74,6 +74,34 @@ final class AppState {
     }
     func dismissToast(_ id: Int) { toasts.removeAll { $0.id == id } }
 
+    /// Actually run a Makefile target in the repo, streaming output to the shell console.
+    func runTarget(_ repo: Repo, _ target: String, host: String) {
+        openConsole(.shell)
+        let pending = toast("make \(target)", "\(repo.name) · running…", .info)
+        let abs = (repo.absolutePath as NSString).expandingTildeInPath
+        Task {
+            let makePath = ["/opt/homebrew/bin/make", "/usr/bin/make"].first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/usr/bin/make"
+            let result = await ProcessRunner.run(makePath, [target], cwd: abs, timeout: 180)
+            let raw = (result.stdout + (result.stderr.isEmpty ? "" : "\n" + result.stderr))
+            let lines: [(text: String, tone: VibeTone)] = raw
+                .split(separator: "\n", omittingEmptySubsequences: false).prefix(200)
+                .map { line in
+                    let s = String(line)
+                    let low = s.lowercased()
+                    let tone: VibeTone = low.contains("error") || low.contains("fail") || s.contains("✗") ? .danger
+                        : low.contains("warn") || s.contains("⚠") ? .warn
+                        : s.contains("✓") || low.contains("passed") || low.contains("green") ? .ok : .neutral
+                    return (s, tone)
+                }
+            dismissToast(pending)
+            shellLog.append(ShellEntry(repoName: repo.name, host: host, cwd: repo.path,
+                                       cmd: "make \(target)", lines: Array(lines), ok: result.ok))
+            if shellLog.count > 12 { shellLog.removeFirst(shellLog.count - 12) }
+            consoleTab = target.contains("validate") ? .output : .shell
+            toast("make \(target)", repo.name + (result.ok ? " · done" : " · exit \(result.code)"), result.ok ? .ok : .danger)
+        }
+    }
+
     /// Route a finding's fix-it to the matching action.
     func runFix(_ f: Finding) {
         if let rid = f.repoId { selectedId = rid }

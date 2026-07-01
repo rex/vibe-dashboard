@@ -1,0 +1,259 @@
+// RepoTabsCore.swift — the four core repo-detail tabs:
+// Overview (identity + meta + compliance), Gates (quality gates + coverage),
+// Census (line-count god-files + largest), Policy (VIBE.yaml vs skeleton).
+
+import SwiftUI
+
+// A small layout constant for the tab-page column split.
+private enum RepoTabLayout {
+    static let metaColumns: CGFloat = 300
+}
+
+// MARK: - Overview
+
+struct RepoOverviewTab: View {
+    let repo: Repo
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.space.x4) {
+                Text("Overview")
+                    .font(VibeFont.sans(VibeFont.size.xxl, .semibold))
+                    .tracking(VibeFont.size.xxl * VibeFont.track.snug)
+                    .foregroundStyle(Theme.color.textBright)
+
+                AppWordmark(name: repo.name, desc: repo.desc, stack: repo.stack,
+                            emblem: repo.emblem, live: repo.agentActive)
+
+                HStack(alignment: .top, spacing: Theme.space.x4) {
+                    VibePanel(title: "REPOSITORY") { metaRows }
+                        .frame(maxWidth: RepoTabLayout.metaColumns)
+
+                    VStack(alignment: .leading, spacing: Theme.space.x4) {
+                        VibePanel(title: "COMPLIANCE", glow: repo.health == .ok) {
+                            VStack(alignment: .leading, spacing: Theme.space.x3) {
+                                Meter(label: "IN POLICY",
+                                      value: Double(repo.compliance),
+                                      tone: complianceTone(repo.compliance))
+                                StatusBadge(text: "\(repo.compliance)% compliant",
+                                            tone: complianceTone(repo.compliance),
+                                            solid: true)
+                            }
+                        }
+                        VibePanel(title: "GATES", flushBody: true) { gateStrip }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(Theme.space.x5)
+        }
+    }
+
+    @ViewBuilder private var metaRows: some View {
+        VStack(spacing: 0) {
+            MetaRow(key: "stack") { Text(repo.lang.label) }
+            MetaRow(key: "lifecycle") { Text(repo.lifecycle) }
+            MetaRow(key: "pm") { Text(repo.pm) }
+            MetaRow(key: "framework") { Text(repo.framework) }
+            MetaRow(key: "branch") { Text(repo.build.branch) }
+            MetaRow(key: "build") { Text(repo.build.version) }
+            MetaRow(key: "commit") { Text(repo.build.commit) }
+            MetaRow(key: "checked") { Text(repo.checked) }
+        }
+    }
+
+    @ViewBuilder private var gateStrip: some View {
+        if repo.gates.isEmpty {
+            EmptyState(icon: "shield-check", tone: .neutral, text: "no gates declared")
+        } else {
+            VStack(spacing: 0) {
+                ForEach(repo.gates) { g in
+                    GateRow(name: g.name, command: g.command,
+                            status: g.status, detail: g.detail, bare: true)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Gates
+
+struct RepoGatesTab: View {
+    let repo: Repo
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.space.x4) {
+                Text("Gates")
+                    .font(VibeFont.sans(VibeFont.size.xxl, .semibold))
+                    .tracking(VibeFont.size.xxl * VibeFont.track.snug)
+                    .foregroundStyle(Theme.color.textBright)
+
+                VibePanel(title: "QUALITY GATES", flushBody: true) {
+                    if repo.gates.isEmpty {
+                        EmptyState(icon: "shield-check", tone: .neutral,
+                                   text: "no quality gates declared in VIBE.yaml")
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(repo.gates) { g in
+                                GateRow(name: g.name, command: g.command,
+                                        status: g.status, detail: g.detail, bare: true)
+                            }
+                        }
+                    }
+                }
+
+                if let coverage = repo.coverage {
+                    VibePanel(title: "COVERAGE") {
+                        Meter(label: "COVERAGE",
+                              value: Double(coverage),
+                              floor: repo.coverageFloor.map(Double.init),
+                              tone: coverageTone(coverage, floor: repo.coverageFloor))
+                    }
+                }
+            }
+            .padding(Theme.space.x5)
+        }
+    }
+
+    private func coverageTone(_ v: Int, floor: Int?) -> VibeTone {
+        guard let f = floor else { return .info }
+        return v >= f ? .ok : .danger
+    }
+}
+
+// MARK: - Census
+
+struct RepoCensusTab: View {
+    let repo: Repo
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.space.x4) {
+                Text("Census")
+                    .font(VibeFont.sans(VibeFont.size.xxl, .semibold))
+                    .tracking(VibeFont.size.xxl * VibeFont.track.snug)
+                    .foregroundStyle(Theme.color.textBright)
+
+                HStack(spacing: Theme.space.x2) {
+                    Text("\(repo.census.scanned) files scanned")
+                        .font(VibeFont.mono(VibeFont.size.sm))
+                        .foregroundStyle(Theme.color.textSecondary)
+                    if repo.census.softCount > 0 {
+                        Pill(text: "\(repo.census.softCount) over soft", tone: .warn)
+                    }
+                }
+
+                VibePanel(title: "GOD FILES · 250 SOFT / 400 HARD") {
+                    if repo.census.godFiles.isEmpty {
+                        EmptyState(icon: "check", tone: .ok,
+                                   text: "no god-files. every file under the 400-line limit.")
+                    } else {
+                        VStack(alignment: .leading, spacing: Theme.space.x3) {
+                            ForEach(repo.census.godFiles) { f in
+                                fileBar(f)
+                            }
+                        }
+                    }
+                }
+
+                if !repo.census.largest.isEmpty {
+                    VibePanel(title: "LARGEST FILES", flushBody: true) {
+                        VStack(spacing: 0) {
+                            ForEach(repo.census.largest) { f in
+                                MetaRow(key: f.path) {
+                                    Text("\(f.lines) ln")
+                                        .foregroundStyle(largestTone(f.lines))
+                                }
+                            }
+                        }
+                        .padding(.horizontal, Theme.space.x4)
+                    }
+                }
+            }
+            .padding(Theme.space.x5)
+        }
+    }
+
+    @ViewBuilder private func fileBar(_ f: FileLines) -> some View {
+        VStack(alignment: .leading, spacing: Theme.space.x1) {
+            Text(f.path)
+                .font(VibeFont.mono(VibeFont.size.xs, .medium))
+                .foregroundStyle(Theme.color.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            LimitBar(value: Double(f.lines), soft: 250, hard: 400, unit: " ln")
+        }
+    }
+
+    private func largestTone(_ lines: Int) -> Color {
+        if lines > 400 { return Theme.color.danger }
+        if lines > 250 { return Theme.color.warn }
+        return Theme.color.textPrimary
+    }
+}
+
+// MARK: - Policy
+
+struct RepoPolicyTab: View {
+    let repo: Repo
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.space.x4) {
+                Text("Policy")
+                    .font(VibeFont.sans(VibeFont.size.xxl, .semibold))
+                    .tracking(VibeFont.size.xxl * VibeFont.track.snug)
+                    .foregroundStyle(Theme.color.textBright)
+
+                if repo.policy.isEmpty {
+                    VibePanel {
+                        EmptyState(icon: "file-code-2", tone: .neutral,
+                                   text: "no VIBE.yaml on disk")
+                    }
+                } else {
+                    ForEach(repo.policy) { section in
+                        VibePanel(title: section.section.uppercased(), flushBody: true) {
+                            VStack(spacing: 0) {
+                                ForEach(section.rows) { row in
+                                    PolicyRowView(row: row)
+                                }
+                            }
+                            .padding(.horizontal, Theme.space.x4)
+                        }
+                    }
+                }
+            }
+            .padding(Theme.space.x5)
+        }
+    }
+}
+
+/// One VIBE.yaml `key … value` line, with delta/invalid annotation.
+private struct PolicyRowView: View {
+    let row: PolicyRow
+
+    var body: some View {
+        MetaRow(key: row.k) {
+            switch row.note {
+            case "delta":
+                HStack(spacing: Theme.space.x2) {
+                    Text(row.v).foregroundStyle(Theme.color.accent)
+                    if let skel = row.skel {
+                        Text(skel)
+                            .foregroundStyle(Theme.color.textFaint)
+                            .strikethrough(true, color: Theme.color.textGhost)
+                    }
+                    Pill(text: "delta", tone: .policy)
+                }
+            case "invalid":
+                HStack(spacing: Theme.space.x2) {
+                    Text(row.v).foregroundStyle(Theme.color.danger)
+                    Pill(text: "invalid", tone: .danger)
+                }
+            default:
+                Text(row.v)
+            }
+        }
+    }
+}
