@@ -28,7 +28,11 @@ enum VibeYamlEditor {
         let existing = (arch?["exclude_globs"] as? [String]) ?? []
         if existing.contains(glob) { return .alreadyExcluded }
 
-        var lines = original.components(separatedBy: "\n")
+        // Normalize line endings for analysis (a stray \r survives .whitespaces
+        // trimming and breaks inline-value detection); re-emit in the original style.
+        let usesCRLF = original.contains("\r\n")
+        let normalized = usesCRLF ? original.replacingOccurrences(of: "\r\n", with: "\n") : original
+        var lines = normalized.components(separatedBy: "\n")
         guard let archIdx = lines.firstIndex(where: { isTopKey($0, "architecture") }) else {
             return .unsafe("no architecture: section to add exclude_globs to")
         }
@@ -57,7 +61,8 @@ enum VibeYamlEditor {
             ], at: archIdx + 1)
         }
 
-        let newText = lines.joined(separator: "\n")
+        var newText = lines.joined(separator: "\n")
+        if usesCRLF { newText = newText.replacingOccurrences(of: "\n", with: "\r\n") }
         // VERIFY: the result must parse AND now contain the glob under architecture.exclude_globs.
         guard let re = (try? Yams.load(yaml: newText)) as? [String: Any],
               let reArch = re["architecture"] as? [String: Any],

@@ -45,16 +45,22 @@ enum DeriveIntegrations {
         } else {
             notes.append(Note(tone: .ok, text: "commit signature verified"))
         }
+        // Dirty/unpushed trees are problems fleet-wide, so grade them red here too
+        // (single letters A<B<C<D<F sort lexically; keep the worse of the two).
+        func worse(_ a: String, _ b: String) -> String { a > b ? a : b }
         if worktree.unpushed > 0 {
-            if grade == "A" { grade = worktree.unpushed > 3 ? "C" : "B" }
-            notes.append(Note(tone: .warn, text: "\(worktree.unpushed) commit(s) ahead — not pushed"))
+            grade = worse(grade, "D")
+            notes.append(Note(tone: .danger, text: "\(worktree.unpushed) commit(s) ahead — not pushed"))
         } else if remotes.isEmpty {
             notes.append(Note(tone: .warn, text: "no remote configured"))
             if grade == "A" { grade = "B" }
         } else {
             notes.append(Note(tone: .ok, text: "in sync with remote"))
         }
-        if !worktree.clean { notes.append(Note(tone: .warn, text: "\(worktree.unstaged) uncommitted change(s)")) }
+        if !worktree.clean {
+            grade = worse(grade, "F")
+            notes.append(Note(tone: .danger, text: "\(worktree.unstaged) uncommitted change(s)"))
+        }
         return Scm(branch: branch, remotes: remotes, grade: grade, notes: notes, signed: worktree.signed)
     }
 
@@ -135,7 +141,10 @@ enum DeriveIntegrations {
                                 note: hasNs("python") ? nil : "inferred from stack"))
         }
         if s.contains("mcp") { out.append(SkillUse(skillId: "lang-mcp", installed: nil, status: .ok)) }
-        if s.contains("react") || s.contains("next") || s.contains("vite") || s.contains("spa") {
+        // Next.js (App Router/SSR) is lang-react; plain SPA / Vite is lang-react-spa.
+        if s.contains("next") {
+            out.append(SkillUse(skillId: "lang-react", installed: nil, status: .ok))
+        } else if s.contains("react") || s.contains("vite") || s.contains("spa") {
             out.append(SkillUse(skillId: "lang-react-spa", installed: nil, status: .ok))
         }
         if s == "go" || s.hasPrefix("go-") || s.contains("golang") || has("go.mod") {

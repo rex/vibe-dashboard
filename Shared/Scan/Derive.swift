@@ -51,7 +51,7 @@ enum Derive {
         case .partial: p += 12
         case .skeleton: break
         }
-        if r.vibePresent && r.policy.isEmpty { p += 20 }
+        if r.vibeMalformed { p += 20 }
         if !r.hygiene.conflictFiles.isEmpty { p += 25 }
         if !r.hygiene.secretFiles.isEmpty { p += 20 }
         if !r.hygiene.trackedJunk.isEmpty { p += 8 }
@@ -67,7 +67,7 @@ enum Derive {
             || !r.worktree.clean                                   // uncommitted changes
             || r.worktree.unpushed > 0                             // committed but never pushed
             || r.management == .unmanaged                          // no policy governs it
-            || (r.vibePresent && r.policy.isEmpty)                 // VIBE.yaml on disk but broken
+            || r.vibeMalformed                                     // VIBE.yaml on disk but won't parse
             || !r.hygiene.conflictFiles.isEmpty                    // merge markers left in files
             || !r.hygiene.secretFiles.isEmpty                      // secrets committed to git
             || !r.hygiene.trackedJunk.isEmpty                      // node_modules/DerivedData committed
@@ -163,7 +163,7 @@ enum Derive {
         if r.management == .unmanaged {
             add(.high, "Managed", "UNMANAGED — no VIBE.yaml",
                 "No policy file governs this repo. An agent has worked here with zero guardrails.", "open file")
-        } else if r.vibePresent && r.policy.isEmpty {
+        } else if r.vibeMalformed {
             add(.high, "Managed", "VIBE.yaml is unparseable",
                 "A policy file exists but doesn't parse — silently, nothing is being enforced.", "open file")
         } else if r.management == .partial {

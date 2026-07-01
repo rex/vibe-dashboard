@@ -11,8 +11,21 @@ struct ProcessResult: Sendable {
 }
 
 enum ProcessRunner {
+    /// Thread-safe accumulator for the two pipes (drained concurrently). The
+    /// happens-before edge is the DispatchGroup, but the compiler can't see it,
+    /// so the lock keeps strict concurrency honest too.
+    private final class IOBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var out = Data(), err = Data()
+        func append(_ d: Data, isOut: Bool) { lock.lock(); if isOut { out.append(d) } else { err.append(d) }; lock.unlock() }
+        var stdout: String { lock.lock(); defer { lock.unlock() }; return String(decoding: out, as: UTF8.self) }
+        var stderr: String { lock.lock(); defer { lock.unlock() }; return String(decoding: err, as: UTF8.self) }
+    }
+    private final class ProcRef: @unchecked Sendable { let p: Process; init(_ p: Process) { self.p = p } }
+
     /// Run an executable and capture output. Never throws; a failure to spawn
-    /// yields code = -1. Runs on a background queue.
+    /// yields code = -1. Runs on a background queue. A hung child is killed after
+    /// `timeout`s (SIGTERM, then SIGKILL) so one stuck git can't stall the scan.
     static func run(_ launchPath: String, _ args: [String],
                     cwd: String? = nil, env: [String: String]? = nil,
                     timeout: TimeInterval = 20) async -> ProcessResult {
@@ -32,20 +45,38 @@ enum ProcessRunner {
                 proc.standardOutput = outPipe
                 proc.standardError = errPipe
 
+                // Drain BOTH pipes concurrently — reading one to EOF before the
+                // other deadlocks whenever the child fills the second pipe buffer.
+                let box = IOBox()
+                let group = DispatchGroup()
+                for (pipe, isOut) in [(outPipe, true), (errPipe, false)] {
+                    group.enter()
+                    pipe.fileHandleForReading.readabilityHandler = { fh in
+                        let d = fh.availableData
+                        if d.isEmpty { fh.readabilityHandler = nil; group.leave() } else { box.append(d, isOut: isOut) }
+                    }
+                }
+
                 do { try proc.run() } catch {
+                    outPipe.fileHandleForReading.readabilityHandler = nil
+                    errPipe.fileHandleForReading.readabilityHandler = nil
                     cont.resume(returning: ProcessResult(stdout: "", stderr: "\(error)", code: -1))
                     return
                 }
 
-                // Read pipes fully to avoid deadlock on large output.
-                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                proc.waitUntilExit()
+                // Watchdog: SIGTERM at the deadline, SIGKILL if it clings on.
+                let ref = ProcRef(proc)
+                let watchdog = DispatchQueue(label: "procrunner.watchdog")
+                let term = DispatchWorkItem { if ref.p.isRunning { ref.p.terminate() } }
+                let kill9 = DispatchWorkItem { if ref.p.isRunning { kill(ref.p.processIdentifier, SIGKILL) } }
+                watchdog.asyncAfter(deadline: .now() + timeout, execute: term)
+                watchdog.asyncAfter(deadline: .now() + timeout + 3, execute: kill9)
 
-                cont.resume(returning: ProcessResult(
-                    stdout: String(decoding: outData, as: UTF8.self),
-                    stderr: String(decoding: errData, as: UTF8.self),
-                    code: proc.terminationStatus))
+                proc.waitUntilExit()
+                term.cancel(); kill9.cancel()
+                group.wait()   // both handlers have now seen EOF
+
+                cont.resume(returning: ProcessResult(stdout: box.stdout, stderr: box.stderr, code: proc.terminationStatus))
             }
         }
     }

@@ -45,6 +45,7 @@ struct Repo: Identifiable, Sendable, Hashable {
     var desc: String = ""
     var managed: Bool = false      // has VIBE.yaml / AGENTS.md / .claude — an agentic repo
     var vibePresent: Bool = false  // a VIBE.yaml file exists on disk (parseable or not)
+    var vibeMalformed: Bool = false  // VIBE.yaml exists but Yams failed to parse it
     var management: ManagementLevel = .skeleton   // how completely the skeleton governs it
     var signedRequired: Bool = false   // VIBE.yaml workflow.signed_commits_required
 

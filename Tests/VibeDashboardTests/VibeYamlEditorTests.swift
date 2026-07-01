@@ -80,6 +80,19 @@ struct VibeYamlEditorTests {
         #expect(VibeYamlEditor.currentExcludes(vibePath: path) == ["a/b.swift"])
     }
 
+    @Test("handles CRLF line endings without mixing them")
+    func crlf() {
+        let src = "architecture:\r\n  exclude_globs: []\r\n  max_lines_per_file:\r\n    hard: 400\r\n"
+        let path = tempVibe(src)
+        let result = VibeYamlEditor.addExcludeGlob(vibePath: path, glob: "a/b.swift")
+        #expect(result == .added(glob: "a/b.swift"))
+        #expect(VibeYamlEditor.currentExcludes(vibePath: path) == ["a/b.swift"])
+        let after = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        let lfs = after.components(separatedBy: "\n").count - 1
+        let crlfs = after.components(separatedBy: "\r\n").count - 1
+        #expect(lfs == crlfs)   // every LF is part of a CRLF — no mixed endings
+    }
+
     @Test("refuses to write a file that doesn't already parse")
     func refusesMalformed() {
         let broken = "architecture:\n  exclude_globs:\n    - \"unterminated\n"

@@ -209,6 +209,7 @@ struct FleetScanner: Sendable {
         r.drift.version = SkeletonProbe.version(abs)
         let vibePresent = FileProbes.exists(FileProbes.join(abs, "VIBE.yaml"))
         r.vibePresent = vibePresent
+        r.vibeMalformed = vibePresent && vibe == nil   // on disk but Yams couldn't parse it
         r.managed = vibePresent
             || FileProbes.exists(FileProbes.join(abs, "AGENTS.md"))
             || FileProbes.exists(FileProbes.join(abs, ".claude"))
