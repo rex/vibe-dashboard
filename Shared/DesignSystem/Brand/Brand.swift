@@ -110,8 +110,6 @@ struct AppWordmark: View {
 struct VibeMark: View {
     var size: CGFloat = 40
     var live: Bool = true
-    @State private var breathe = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         CursorBlink(width: size * 0.17, height: size * 0.5)
             .frame(width: size, height: size)
@@ -122,12 +120,7 @@ struct VibeMark: View {
             .clipShape(RoundedRectangle(cornerRadius: size * 0.235, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: size * 0.235, style: .continuous)
                 .strokeBorder(Theme.color.okLine, lineWidth: 1))
-            .shadow(color: ColorPalette.lime400.opacity(live ? (breathe ? 0.34 : 0.18) : 0), radius: live ? (breathe ? 17 : 9) : 0)
-            .onAppear {
-                if live && !reduceMotion {
-                    withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { breathe = true }
-                }
-            }
+            .shadow(color: ColorPalette.lime400.opacity(live ? 0.22 : 0), radius: live ? 12 : 0)
     }
 }
 

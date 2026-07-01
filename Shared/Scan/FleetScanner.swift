@@ -16,35 +16,34 @@ struct FleetScanner: Sendable {
         let start = Date()
         let candidates = discover()
 
-        // Probe every candidate concurrently.
+        // Determine managed repos with a CHEAP marker check BEFORE probing.
+        // Fully probing every git repo under ~/Code (191+) would spawn thousands
+        // of git/lsof subprocesses and lock the machine up — so we only probe
+        // managed (agentic) repos plus their workspace ancestors.
+        let managedPaths = candidates.filter { isManagedMarker($0) }
+        var keepPaths = Set(managedPaths)
+        for m in managedPaths {
+            for c in candidates where c != m && m.hasPrefix(c + "/") { keepPaths.insert(c) }
+        }
+
+        // Probe only the kept set concurrently.
         var repos: [Repo] = await withTaskGroup(of: Repo.self) { group in
-            for abs in candidates { group.addTask { await probeRepo(abs, now: now) } }
+            for abs in keepPaths { group.addTask { await probeRepo(abs, now: now) } }
             var acc: [Repo] = []
             for await r in group { acc.append(r) }
             return acc
         }
 
-        // Nesting: parent = longest candidate that is a strict path prefix.
-        let absSet = Set(repos.map(\.absolutePath))
+        // Nesting: parent = longest kept path that is a strict path prefix.
         var idByAbs: [String: String] = [:]
         for r in repos { idByAbs[r.absolutePath] = r.id }
         for i in repos.indices {
             let mine = repos[i].absolutePath
-            let parent = absSet.filter { $0 != mine && mine.hasPrefix($0 + "/") }.max { $0.count < $1.count }
+            let parent = keepPaths.filter { $0 != mine && mine.hasPrefix($0 + "/") }.max { $0.count < $1.count }
             repos[i].parentId = parent.flatMap { idByAbs[$0] }
         }
-        // Keep only managed repos (+ their ancestors, which become workspaces).
-        var keep = Set(repos.filter { $0.managed }.map { $0.id })
-        var changed = true
-        while changed {
-            changed = false
-            for r in repos where keep.contains(r.id) {
-                if let p = r.parentId, !keep.contains(p) { keep.insert(p); changed = true }
-            }
-        }
-        repos = repos.filter { keep.contains($0.id) }
         var childrenOf: [String: [String]] = [:]
-        for r in repos { if let p = r.parentId, keep.contains(p) { childrenOf[p, default: []].append(r.id) } }
+        for r in repos { if let p = r.parentId { childrenOf[p, default: []].append(r.id) } }
 
         // Live agent sessions → attach to the deepest matching repo.
         let sessions = await AgentProbe.sessions()
@@ -67,7 +66,7 @@ struct FleetScanner: Sendable {
         }
         let byId = Dictionary(uniqueKeysWithValues: repos.map { ($0.id, $0) })
         for i in repos.indices {
-            let signedReq = repos[i].scm.signed || true   // signed_commits assumed required by policy
+            let signedReq = repos[i].signedRequired
             if repos[i].kind == .workspace {
                 let children = repos[i].children.compactMap { byId[$0] }
                 let worst = children.map(\.health).max() ?? .ok
@@ -123,6 +122,10 @@ struct FleetScanner: Sendable {
     private func isCandidate(_ abs: String) -> Bool {
         ["/.git", "/VIBE.yaml", "/WORKSPACE.yaml"].contains { FleetScanner.fm.fileExists(atPath: abs + $0) }
     }
+    /// Cheap check (no probing) for whether a repo is agentic/managed.
+    private func isManagedMarker(_ abs: String) -> Bool {
+        ["/VIBE.yaml", "/AGENTS.md", "/.claude", "/WORKSPACE.yaml"].contains { FleetScanner.fm.fileExists(atPath: abs + $0) }
+    }
     private func isDir(_ path: String) -> Bool {
         var d: ObjCBool = false
         return FleetScanner.fm.fileExists(atPath: path, isDirectory: &d) && d.boolValue
@@ -164,6 +167,7 @@ struct FleetScanner: Sendable {
         r.managed = FileProbes.exists(FileProbes.join(abs, "VIBE.yaml"))
             || FileProbes.exists(FileProbes.join(abs, "AGENTS.md"))
             || FileProbes.exists(FileProbes.join(abs, ".claude"))
+        r.signedRequired = signedRequired(vibe)
         r.checked = "just now"
         return r
     }

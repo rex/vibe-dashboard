@@ -145,17 +145,9 @@ struct GradeChip: View {
     }
 }
 
-/// Pulse animation for live dots (respects reduce-motion).
+/// Live-dot emphasis. Static by design — a continuous per-dot pulse across
+/// dozens of rows pegs the main thread, so we keep the glow but not the loop.
 struct PulseModifier: ViewModifier {
     var active: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var on = false
-    func body(content: Content) -> some View {
-        content
-            .opacity(active && on && !reduceMotion ? 0.45 : 1)
-            .scaleEffect(active && on && !reduceMotion ? 0.82 : 1)
-            .onAppear { if active && !reduceMotion {
-                withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) { on = true }
-            } }
-    }
+    func body(content: Content) -> some View { content }
 }

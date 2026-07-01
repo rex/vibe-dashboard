@@ -43,26 +43,24 @@ struct HealthDot: View {
     }
 }
 
-/// Live agent equalizer — 3 bars, only animates when active.
+/// Live-agent equalizer — 3 bars. Static heights (a per-row repeatForever
+/// animation across every active repo pegs the main thread); the color + the
+/// frozen-equalizer shape carry the "agent working" signal.
 struct AgentPulse: View {
     var active: Bool = true
     var color: Color = Theme.color.warn
     var size: CGFloat = 13
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let heights: [CGFloat] = [0.5, 1.0, 0.68]
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.08, paused: !active || reduceMotion)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .center, spacing: 2) {
-                ForEach(0..<3, id: \.self) { i in
-                    let phase = active && !reduceMotion ? (sin(t * 3.2 + Double(i) * 1.1) * 0.325 + 0.675) : 0.4
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(color)
-                        .frame(width: 2.5, height: size * CGFloat(phase))
-                        .opacity(active ? 1 : 0.4)
-                }
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(0..<3, id: \.self) { i in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(color)
+                    .frame(width: 2.5, height: size * heights[i])
             }
-            .frame(height: size)
         }
+        .frame(height: size)
+        .opacity(active ? 1 : 0.4)
     }
 }
 

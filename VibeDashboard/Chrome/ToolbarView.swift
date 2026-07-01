@@ -24,6 +24,12 @@ struct ToolbarView: View {
         HStack(spacing: Theme.space.x3) {
             Color.clear.frame(width: 72)   // native traffic lights
 
+            HStack(spacing: Theme.space.x2) {
+                VibeMark(size: 20)
+                Wordmark(size: 15)
+            }
+            Rectangle().fill(Theme.color.border).frame(width: 1, height: 22)
+
             HStack(spacing: 2) {
                 toolIcon("chevron-left", enabled: inRepo) { app.back() }
                 toolIcon("chevron-right", enabled: false) {}
