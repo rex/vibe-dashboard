@@ -73,7 +73,7 @@ enum VibeYamlEditor {
             return .unsafe("edit did not validate — VIBE.yaml left untouched")
         }
         // Backup (best-effort) then atomic write.
-        try? original.write(toFile: vibePath + ".bak", atomically: true, encoding: .utf8)
+        try? original.write(toFile: backupPath(for: vibePath), atomically: true, encoding: .utf8)
         do { try newText.write(toFile: vibePath, atomically: true, encoding: .utf8) } catch {
             return .unsafe("write failed: \(error.localizedDescription)")
         }
@@ -121,7 +121,7 @@ enum VibeYamlEditor {
               recordedSkillIds(re).contains(id) else {
             return .unsafe("edit did not validate — VIBE.yaml left untouched")
         }
-        try? original.write(toFile: vibePath + ".bak", atomically: true, encoding: .utf8)
+        try? original.write(toFile: backupPath(for: vibePath), atomically: true, encoding: .utf8)
         do { try newText.write(toFile: vibePath, atomically: true, encoding: .utf8) } catch {
             return .unsafe("write failed: \(error.localizedDescription)")
         }
@@ -132,6 +132,16 @@ enum VibeYamlEditor {
         if let maps = dict["skills"] as? [[String: Any]] { return maps.compactMap { $0["id"] as? String } }
         if let ids = dict["skills"] as? [String] { return ids }
         return []
+    }
+
+    /// Backups go to the app's own directory, NEVER next to the file — dropping a
+    /// `.bak` into a scanned repo is exactly the committed-junk this app flags.
+    static func backupPath(for vibePath: String) -> String {
+        let dir = (NSHomeDirectory() as NSString)
+            .appendingPathComponent("Library/Application Support/VibeDashboard/backups")
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let slug = vibePath.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: " ", with: "_")
+        return (dir as NSString).appendingPathComponent(slug + ".bak")
     }
 
     /// The globs currently excluded (for showing the user before/after).

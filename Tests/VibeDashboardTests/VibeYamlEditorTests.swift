@@ -41,7 +41,8 @@ struct VibeYamlEditorTests {
         let globs = VibeYamlEditor.currentExcludes(vibePath: path)
         #expect(globs.contains("**/Generated/**"))   // original preserved
         #expect(globs.contains("Sources/Big.swift"))  // new one added
-        #expect(FileManager.default.fileExists(atPath: path + ".bak"))  // backup written
+        #expect(!FileManager.default.fileExists(atPath: path + ".bak"))  // NEVER drops a .bak in the repo
+        #expect(FileManager.default.fileExists(atPath: VibeYamlEditor.backupPath(for: path)))  // backup lives in app dir
     }
 
     @Test("is idempotent — a second add reports alreadyExcluded")
