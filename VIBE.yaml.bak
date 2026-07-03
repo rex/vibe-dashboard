@@ -82,8 +82,3 @@ decisions:
   - id: yaml-parser
     what: Yams (SPM) parses each repo's VIBE.yaml for the policy inspector.
     when: '2026-07-01'
-skills:
-  - id: lang-swift-apple
-    version: "0.3.0"
-    applied: 2026-07-01
-    source: transcript-backfill

@@ -14,14 +14,18 @@ struct SidebarView: View {
     private var rows: [RowItem] {
         let f = store.fleet
         var out: [RowItem] = []
-        for ws in f.workspaces {
+        var placed = Set<String>()   // no repo id twice (nested workspaces would duplicate)
+        for ws in f.workspaces where ws.parentId == nil {
+            guard placed.insert(ws.id).inserted else { continue }
             out.append(RowItem(repo: ws, depth: 0, hasChildren: true))
             if !collapsed.contains(ws.id) {
                 let kids = ws.children.compactMap { f.byId[$0] }.sorted { $0.name.lowercased() < $1.name.lowercased() }
-                for c in kids { out.append(RowItem(repo: c, depth: 1, hasChildren: false)) }
+                for c in kids where placed.insert(c.id).inserted {
+                    out.append(RowItem(repo: c, depth: 1, hasChildren: false))
+                }
             }
         }
-        for r in f.leaves where r.parentId == nil {
+        for r in f.leaves where r.parentId == nil && placed.insert(r.id).inserted {
             out.append(RowItem(repo: r, depth: 0, hasChildren: false))
         }
         return out

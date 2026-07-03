@@ -105,7 +105,9 @@ enum Derive {
         }
         // census
         for gf in r.census.godFiles {
-            add(gf.lines > hardLimit + 60 ? .high : .med, "Census", "god-file: \((gf.path as NSString).lastPathComponent)",
+            // Full path, not basename — two `page.tsx` in different dirs must not
+            // collide into the same finding id (duplicate ForEach ids break the list).
+            add(gf.lines > hardLimit + 60 ? .high : .med, "Census", "god-file: \(gf.path)",
                 "\(gf.lines) lines — over hard \(hardLimit). Split it before review rubber-stamps it.", "split file")
         }
         // management, worktree hygiene & shenanigans (kept in a helper for clarity)
@@ -134,7 +136,7 @@ enum Derive {
         }
         // mcp
         for m in r.mcp where m.broad {
-            add(.med, "MCP", "\(m.name) mounted broadly", "The agent has read/write beyond the repo via \(m.name). Scope it.", "scope server")
+            add(.med, "MCP", "\(m.name) mounted broadly", "Read/write reaches beyond the repo via \(m.name). Scope it.", "scope server")
         }
         for m in r.mcp where m.status == .failed {
             add(.med, "MCP", "\(m.name) unreachable", "Recent \(m.name) calls failed — token expired or server down.", "reconnect")

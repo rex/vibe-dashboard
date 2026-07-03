@@ -98,14 +98,21 @@ struct Fleet: Sendable {
         f.leaves = repos.filter { $0.kind != .workspace }.sorted(by: byName)
         f.workspaces = repos.filter { $0.kind == .workspace }.sorted(by: byName)
 
-        // nested tree: workspaces (alpha) + their children (alpha), then top-level repos (alpha).
+        // nested tree: TOP-LEVEL workspaces (alpha) + their children (alpha), then
+        // top-level repos (alpha). A repo that is BOTH a workspace AND a child of
+        // another workspace must appear ONCE — `placed` guarantees no duplicate id
+        // reaches ForEach (duplicate ids → "undefined results" + render thrash).
         var tree: [TreeNode] = []
-        for ws in f.workspaces {
+        var placed = Set<String>()
+        for ws in f.workspaces where ws.parentId == nil {
+            guard placed.insert(ws.id).inserted else { continue }
             tree.append(TreeNode(repoId: ws.id, depth: 0))
             let kids = ws.children.compactMap { f.byId[$0] }.sorted(by: byName)
-            for c in kids { tree.append(TreeNode(repoId: c.id, depth: 1)) }
+            for c in kids where placed.insert(c.id).inserted {
+                tree.append(TreeNode(repoId: c.id, depth: 1))
+            }
         }
-        for r in f.leaves where r.parentId == nil {
+        for r in f.leaves where r.parentId == nil && placed.insert(r.id).inserted {
             tree.append(TreeNode(repoId: r.id, depth: 0))
         }
         f.tree = tree

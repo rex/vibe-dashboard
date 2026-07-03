@@ -30,7 +30,12 @@ enum ProcessRunner {
                     cwd: String? = nil, env: [String: String]? = nil,
                     timeout: TimeInterval = 20) async -> ProcessResult {
         await withCheckedContinuation { (cont: CheckedContinuation<ProcessResult, Never>) in
-            DispatchQueue.global(qos: .userInitiated).async {
+            // ONE consistent QoS end-to-end, and NOTHING blocks a thread waiting on
+            // lower-QoS work. The prior version blocked a user-initiated thread on
+            // `group.wait()` for default-QoS pipe handlers — a priority inversion that
+            // could stall the whole scan (isScanning stuck → "constantly scanning").
+            let queue = DispatchQueue(label: "procrunner", qos: .utility, attributes: .concurrent)
+            queue.async {
                 let proc = Process()
                 proc.executableURL = URL(fileURLWithPath: launchPath)
                 proc.arguments = args
@@ -45,38 +50,39 @@ enum ProcessRunner {
                 proc.standardOutput = outPipe
                 proc.standardError = errPipe
 
-                // Drain BOTH pipes concurrently — reading one to EOF before the
-                // other deadlocks whenever the child fills the second pipe buffer.
-                let box = IOBox()
-                let group = DispatchGroup()
-                for (pipe, isOut) in [(outPipe, true), (errPipe, false)] {
-                    group.enter()
-                    pipe.fileHandleForReading.readabilityHandler = { fh in
-                        let d = fh.availableData
-                        if d.isEmpty { fh.readabilityHandler = nil; group.leave() } else { box.append(d, isOut: isOut) }
-                    }
-                }
-
                 do { try proc.run() } catch {
-                    outPipe.fileHandleForReading.readabilityHandler = nil
-                    errPipe.fileHandleForReading.readabilityHandler = nil
                     cont.resume(returning: ProcessResult(stdout: "", stderr: "\(error)", code: -1))
                     return
                 }
 
-                // Watchdog: SIGTERM at the deadline, SIGKILL if it clings on.
+                // Drain both pipes concurrently, each to EOF on its own thread — no
+                // sequential pipe-buffer deadlock, and no cross-QoS blocking wait.
+                let box = IOBox()
+                let group = DispatchGroup()
+                for (pipe, isOut) in [(outPipe, true), (errPipe, false)] {
+                    group.enter()
+                    queue.async {
+                        let d = pipe.fileHandleForReading.readDataToEndOfFile()
+                        box.append(d, isOut: isOut)
+                        group.leave()
+                    }
+                }
+
+                // Watchdog: a hung child gets SIGTERM at the deadline, SIGKILL after —
+                // that closes its pipes, unblocking the reads so we can never hang forever.
                 let ref = ProcRef(proc)
-                let watchdog = DispatchQueue(label: "procrunner.watchdog")
+                let wq = DispatchQueue(label: "procrunner.watchdog")
                 let term = DispatchWorkItem { if ref.p.isRunning { ref.p.terminate() } }
                 let kill9 = DispatchWorkItem { if ref.p.isRunning { kill(ref.p.processIdentifier, SIGKILL) } }
-                watchdog.asyncAfter(deadline: .now() + timeout, execute: term)
-                watchdog.asyncAfter(deadline: .now() + timeout + 3, execute: kill9)
+                wq.asyncAfter(deadline: .now() + timeout, execute: term)
+                wq.asyncAfter(deadline: .now() + timeout + 3, execute: kill9)
 
-                proc.waitUntilExit()
-                term.cancel(); kill9.cancel()
-                group.wait()   // both handlers have now seen EOF
-
-                cont.resume(returning: ProcessResult(stdout: box.stdout, stderr: box.stderr, code: proc.terminationStatus))
+                // Non-blocking: resume once both pipes hit EOF (child has exited).
+                group.notify(queue: queue) {
+                    proc.waitUntilExit()   // pipes at EOF → child gone → returns immediately
+                    term.cancel(); kill9.cancel()
+                    cont.resume(returning: ProcessResult(stdout: box.stdout, stderr: box.stderr, code: proc.terminationStatus))
+                }
             }
         }
     }
