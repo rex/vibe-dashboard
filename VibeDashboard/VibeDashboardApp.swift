@@ -20,7 +20,7 @@ struct VibeDashboardApp: App {
                 .environment(app)
                 .frame(minWidth: 1180, minHeight: 760)
                 .preferredColorScheme(.dark)
-                .task { await store.rescan() }
+                .task { await store.rescan(); store.startAgentMonitor() }
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1440, height: 900)

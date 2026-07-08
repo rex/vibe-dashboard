@@ -151,8 +151,19 @@ struct BackfillSheet: View {
             switch result {
             case .skillRecorded(let rid):
                 done.insert(mark)
-                app.toast("recorded \(rid)", "\(name) · VIBE.yaml skills: + \(version ?? "no version")", .ok)
-                await store.rescan()
+                // Surgically commit + push ONLY VIBE.yaml so the backfill never leaves a
+                // dirty tree behind. The `-- VIBE.yaml` pathspec on commit ensures nothing
+                // unrelated the user has in flight gets swept into this provenance commit.
+                let steps: [(label: String, args: [String])] = [
+                    (label: "stage VIBE.yaml", args: ["add", "--", "VIBE.yaml"]),
+                    (label: "commit VIBE.yaml",
+                     args: GitWrite.commitArgs(message: "chore(vibe): record \(rid) skill provenance") + ["--", "VIBE.yaml"]),
+                    (label: "push", args: GitWrite.pushArgs),
+                ]
+                _ = await app.runGit(repo, host: store.fleet.scanner.host, steps: steps,
+                                     okTitle: "recorded + pushed \(rid)",
+                                     okDetail: "\(name) · VIBE.yaml committed & pushed")
+                await store.rescan(repoId: repo.id)
             case .alreadyRecorded:
                 done.insert(mark); app.toast("already recorded", "\(id) already in \(name)", .info)
             case .noVibe: app.toast("no VIBE.yaml", "\(name) has no policy file to edit", .warn)

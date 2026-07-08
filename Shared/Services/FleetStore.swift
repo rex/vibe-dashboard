@@ -93,6 +93,58 @@ final class FleetStore {
         isScanning = false
     }
 
+    // ---- background agent monitor (lightweight — no full rescan) ----
+    private var agentMonitor: Task<Void, Never>?
+
+    /// Auto-refresh ONLY live-agent detection every `interval` seconds — Pierce's ask:
+    /// agents update in the background without a full app rescan. Cancellable and idle
+    /// between ticks (Task.sleep, never a repeatForever/CPU spinner). Started once from
+    /// the app root's `.task`.
+    func startAgentMonitor(interval: TimeInterval = 120) {
+        guard agentMonitor == nil else { return }
+        agentMonitor = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(interval))
+                guard !Task.isCancelled else { break }
+                await self?.refreshAgents()
+            }
+        }
+    }
+    func stopAgentMonitor() { agentMonitor?.cancel(); agentMonitor = nil }
+
+    /// Re-detect live agent sessions and update ONLY the agent field on each repo — no
+    /// git/census/docs re-probe. A COMPLETE session (> 1h idle, dropped by the probe)
+    /// clears its repo's agent. All sessions + measured work are gathered up front
+    /// (async), then applied in one synchronous main-actor pass against the CURRENT
+    /// rawFleet — so a full rescan that completed during the awaits is never clobbered.
+    func refreshAgents(now: Date = Date()) async {
+        let sessions = await AgentProbe.sessions(now: now)
+        var work: [String: AgentProbe.WorkStat] = [:]
+        for s in sessions { work[s.cwd] = await AgentProbe.workStat(cwd: s.cwd, now: now) }
+        applyAgentSessions(sessions, work: work, now: now)
+    }
+
+    private func applyAgentSessions(_ sessions: [AgentProbe.Session],
+                                    work: [String: AgentProbe.WorkStat], now: Date) {
+        var repos = rawFleet.repos
+        var target: [Int: AgentInfo] = [:]
+        for s in sessions {
+            guard let idx = repos.indices
+                .filter({ s.cwd == repos[$0].absolutePath || s.cwd.hasPrefix(repos[$0].absolutePath + "/") })
+                .max(by: { repos[$0].absolutePath.count < repos[$1].absolutePath.count }) else { continue }
+            target[idx] = AgentInfo.live(session: s, work: work[s.cwd] ?? AgentProbe.WorkStat(),
+                                         clean: repos[idx].worktree.clean,
+                                         branch: repos[idx].build.branch, now: now)
+        }
+        var changed = false
+        for i in repos.indices where repos[i].agent != target[i] { repos[i].agent = target[i]; changed = true }
+        guard changed else { return }   // no agent state moved — skip the re-assemble (idle = zero work)
+        rawFleet = Fleet.assemble(scanner: rawFleet.scanner, appBuild: rawFleet.appBuild, repos: repos,
+                                  activity: rawFleet.activity, autopilot: rawFleet.autopilot,
+                                  catalog: rawFleet.skillCatalog)
+        applyVisibility()
+    }
+
     // ---- ignore / visibility ----
     func isIgnored(_ id: String) -> Bool { ignoredIds.contains(id) }
     var ignoredCount: Int { rawFleet.repos.filter { ignoredIds.contains($0.id) }.count }

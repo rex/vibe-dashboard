@@ -9,12 +9,23 @@
 
 import Foundation
 
+/// A session's lifecycle stage from its last activity. A session > `retentionWindow`
+/// idle is COMPLETE and no longer surfaced at all (dropped by the probe).
+enum AgentState: String, Sendable, Hashable { case active, idle }
+
 enum AgentProbe {
+    /// Pierce's lifecycle spec: a session is ACTIVE for 15 min after its last write,
+    /// then IDLE up to 1 hour, then COMPLETE (dropped — no longer shown).
+    static let activeWindow: TimeInterval = 15 * 60
+    static let retentionWindow: TimeInterval = 60 * 60
+
     struct Session: Sendable {
         var pid: Int
         var tool: String        // claude-code | codex | aider | gemini | opencode
         var cwd: String
         var elapsed: String
+        var lastActivity: Date
+        var state: AgentState
     }
 
     /// Measured, uncommitted work for a live session — every field is real.
@@ -29,47 +40,91 @@ enum AgentProbe {
     static var fm: FileManager { .default }
 
     static func sessions(now: Date = Date()) async -> [Session] {
-        // PRIMARY — Claude Code appends a live transcript per session under
-        // ~/.claude/projects/<slug>/<sessionId>.jsonl. A transcript touched within the
-        // freshness window IS a live session, mapped to its repo by the transcript's real
-        // `cwd`. This is reliable no matter how the process is named in `ps` — modern
-        // Claude Code runs under node/SDK/headless wrappers whose basename ISN'T "claude",
-        // which the old ps-basename match missed entirely (the "live agents broken" bug).
-        var found = claudeTranscriptSessions(now: now)
-        var seen = Set(found.map { $0.cwd })
-        // SUPPLEMENT — ps for OTHER agent CLIs (codex/aider/gemini/opencode) that don't
-        // write to ~/.claude/projects. Deduped by cwd so it never double-counts a repo.
-        for s in await psSessions() where seen.insert(s.cwd).inserted { found.append(s) }
-        return found
+        // PRIMARY — coding agents append a live transcript per session; a transcript
+        // touched within the retention window IS a live session, mapped to its repo by
+        // the transcript's real `cwd`. Reliable no matter how the process is named in
+        // `ps` (modern Claude Code / Codex run under node/SDK wrappers a basename match
+        // misses). Claude: ~/.claude/projects. Codex: ~/.codex/sessions/YYYY/MM/DD.
+        var best: [String: Session] = [:]   // cwd → freshest session across providers
+        func consider(_ s: Session) {
+            if let e = best[s.cwd], e.lastActivity >= s.lastActivity { return }
+            best[s.cwd] = s
+        }
+        claudeTranscriptSessions(now: now).forEach(consider)
+        codexTranscriptSessions(now: now).forEach(consider)
+        // SUPPLEMENT — ps for OTHER agent CLIs (aider/gemini/opencode) with no transcript
+        // store here. Only where no transcript already claimed the cwd.
+        for s in await psSessions(now: now) where best[s.cwd] == nil { best[s.cwd] = s }
+        return Array(best.values)
     }
 
-    /// Live Claude sessions from fresh transcript JSONLs. Synchronous bounded file IO.
-    static func claudeTranscriptSessions(now: Date, freshness: TimeInterval = 180) -> [Session] {
+    /// Live Claude sessions from transcript JSONLs under ~/.claude/projects/<slug>/.
+    static func claudeTranscriptSessions(now: Date) -> [Session] {
         let root = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/projects")
         guard let slugs = try? fm.contentsOfDirectory(atPath: root) else { return [] }
-        var best: [String: (mtime: Date, start: Date?)] = [:]   // cwd → freshest transcript
+        var best: [String: Session] = [:]
         for slug in slugs {
             let dir = (root as NSString).appendingPathComponent(slug)
             guard let files = try? fm.contentsOfDirectory(atPath: dir) else { continue }
             for f in files where f.hasSuffix(".jsonl") {
                 let path = (dir as NSString).appendingPathComponent(f)
-                guard let attrs = try? fm.attributesOfItem(atPath: path),
-                      let mtime = attrs[.modificationDate] as? Date,
-                      now.timeIntervalSince(mtime) >= 0, now.timeIntervalSince(mtime) < freshness else { continue }
-                let head = fileHead(path)
-                guard let cwd = extractJSONString(head, key: "cwd"), !cwd.isEmpty else { continue }
-                if let existing = best[cwd], existing.mtime >= mtime { continue }
-                let start = extractJSONString(head, key: "timestamp").flatMap { ISO8601DateFormatter().date(from: $0) }
-                best[cwd] = (mtime, start)
+                keepFreshest(&best, sessionFromTranscript(path, tool: "claude-code", now: now))
             }
         }
-        return best.map { cwd, info in
-            Session(pid: 0, tool: "claude-code", cwd: cwd,
-                    elapsed: info.start.map { RelTime.compact(now.timeIntervalSince($0)) } ?? "live")
-        }
+        return Array(best.values)
     }
 
-    private static func psSessions() async -> [Session] {
+    /// Live Codex sessions from ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl. Only today's
+    /// and yesterday's date dirs are scanned (a fresh session is < 1h old), so the deep,
+    /// ever-growing session archive is never enumerated.
+    static func codexTranscriptSessions(now: Date) -> [Session] {
+        let root = (NSHomeDirectory() as NSString).appendingPathComponent(".codex/sessions")
+        let cal = Calendar(identifier: .gregorian)
+        var best: [String: Session] = [:]
+        for offset in 0...1 {
+            guard let day = cal.date(byAdding: .day, value: -offset, to: now) else { continue }
+            let c = cal.dateComponents([.year, .month, .day], from: day)
+            guard let y = c.year, let m = c.month, let d = c.day else { continue }
+            let dir = "\(root)/\(y)/\(String(format: "%02d", m))/\(String(format: "%02d", d))"
+            guard let files = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+            for f in files where f.hasSuffix(".jsonl") {
+                let path = (dir as NSString).appendingPathComponent(f)
+                keepFreshest(&best, sessionFromTranscript(path, tool: "codex", now: now))
+            }
+        }
+        return Array(best.values)
+    }
+
+    private static func keepFreshest(_ best: inout [String: Session], _ s: Session?) {
+        guard let s else { return }
+        if let e = best[s.cwd], e.lastActivity >= s.lastActivity { return }
+        best[s.cwd] = s
+    }
+
+    /// Build a Session from a transcript file when it's within the retention window. nil
+    /// when stale (> 1h — COMPLETE), unreadable, or missing a cwd. Bounded file IO.
+    private static func sessionFromTranscript(_ path: String, tool: String, now: Date) -> Session? {
+        guard let attrs = try? fm.attributesOfItem(atPath: path),
+              let mtime = attrs[.modificationDate] as? Date,
+              let state = lifecycle(age: now.timeIntervalSince(mtime)) else { return nil }
+        let head = fileHead(path)
+        guard let cwd = extractJSONString(head, key: "cwd"), !cwd.isEmpty else { return nil }
+        let start = extractJSONString(head, key: "timestamp").flatMap { ISO8601DateFormatter().date(from: $0) }
+        return Session(pid: 0, tool: tool, cwd: cwd,
+                       elapsed: start.map { RelTime.compact(now.timeIntervalSince($0)) } ?? "live",
+                       lastActivity: mtime, state: state)
+    }
+
+    /// Lifecycle from a session's age since last write: active (< 15m), idle (< 1h), or
+    /// nil = COMPLETE (no longer surfaced). Pure + testable. A negative age (clock skew /
+    /// a future mtime) is treated as active.
+    static func lifecycle(age: TimeInterval) -> AgentState? {
+        if age < activeWindow { return .active }        // includes negative (clock skew)
+        if age < retentionWindow { return .idle }
+        return nil
+    }
+
+    private static func psSessions(now: Date) async -> [Session] {
         let ps = await ProcessRunner.run("/bin/ps", ["-axo", "pid=,etime=,command="])
         guard ps.ok else { return [] }
         var found: [Session] = []
@@ -79,9 +134,11 @@ enum AgentProbe {
             // "  pid  etime  command …" → [pid, etime, command]
             let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true).map(String.init)
             guard parts.count == 3, let pid = Int(parts[0]) else { continue }
-            guard let tool = matchTool(command: parts[2]), tool != "claude-code" else { continue }
+            guard let tool = matchTool(command: parts[2]), tool != "claude-code", tool != "codex" else { continue }
             guard let cwd = await cwd(of: pid), !cwd.isEmpty else { continue }
-            found.append(Session(pid: pid, tool: tool, cwd: cwd, elapsed: humanize(parts[1])))
+            // A live process is active by definition (ps only lists running ones).
+            found.append(Session(pid: pid, tool: tool, cwd: cwd, elapsed: humanize(parts[1]),
+                                 lastActivity: now, state: .active))
         }
         return found
     }

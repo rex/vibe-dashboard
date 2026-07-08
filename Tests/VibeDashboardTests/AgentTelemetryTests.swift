@@ -84,4 +84,15 @@ struct TranscriptCwdTests {
         #expect(AgentProbe.extractJSONString(head, key: "gitBranch") == nil)   // absent ⇒ nil
         #expect(AgentProbe.extractJSONString("not json at all", key: "cwd") == nil)
     }
+
+    @Test("session lifecycle: active <15m, idle <1h, complete (nil) after")
+    func lifecycleWindows() {
+        #expect(AgentProbe.lifecycle(age: -5) == .active)          // clock skew / future mtime
+        #expect(AgentProbe.lifecycle(age: 60) == .active)          // 1 min
+        #expect(AgentProbe.lifecycle(age: 14 * 60) == .active)     // 14 min
+        #expect(AgentProbe.lifecycle(age: 15 * 60) == .idle)       // exactly 15 min → idle
+        #expect(AgentProbe.lifecycle(age: 45 * 60) == .idle)       // 45 min
+        #expect(AgentProbe.lifecycle(age: 60 * 60) == nil)         // exactly 1h → complete (dropped)
+        #expect(AgentProbe.lifecycle(age: 3 * 3600) == nil)        // long done
+    }
 }

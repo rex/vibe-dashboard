@@ -78,6 +78,7 @@ struct Hygiene: Sendable, Hashable {
 /// fabricated "+0 −0"; a measured no-op is a real 0 and is shown.
 struct AgentInfo: Sendable, Hashable {
     var active: Bool = false
+    var state: AgentState = .active  // active (lime, <15m) vs idle (15–60m since last write)
     var tool: String? = nil
     var branch: String? = nil
     var elapsed: String? = nil
@@ -86,6 +87,29 @@ struct AgentInfo: Sendable, Hashable {
     var linesRemoved: Int? = nil     // real removed lines; nil = not measurable (don't render)
     var lastActivity: String = "—"   // RelTime.ago of the newest working-tree mtime; "—" if unknown
     var note: String = "idle"        // honest summary derived from the real diff
+}
+
+extension AgentInfo {
+    /// Build a live-session AgentInfo from a detected session + its measured work — the
+    /// single construction path shared by the full scan and the background agent refresh.
+    static func live(session s: AgentProbe.Session, work: AgentProbe.WorkStat,
+                     clean: Bool, branch: String, now: Date) -> AgentInfo {
+        AgentInfo(
+            active: true, state: s.state, tool: s.tool, branch: branch, elapsed: s.elapsed,
+            filesTouched: work.filesTouched,
+            linesAdded: work.measured ? work.linesAdded : nil,
+            linesRemoved: work.measured ? work.linesRemoved : nil,
+            lastActivity: work.lastWrite.map { RelTime.ago($0, now: now) } ?? "—",
+            note: note(work: work, clean: clean))
+    }
+
+    /// Honest one-line session summary from the measured diff — no constants.
+    static func note(work: AgentProbe.WorkStat, clean: Bool) -> String {
+        if work.filesTouched > 0 {
+            return "\(work.filesTouched) file\(work.filesTouched == 1 ? "" : "s") changed since last commit"
+        }
+        return clean ? "live session · working tree clean" : "untracked changes in the working tree"
+    }
 }
 
 struct DocFile: Sendable, Hashable {

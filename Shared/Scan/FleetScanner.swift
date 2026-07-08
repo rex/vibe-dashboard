@@ -110,30 +110,19 @@ struct FleetScanner: Sendable {
     }
 
     /// Attach live agent sessions to the deepest matching repo, with REAL measured
-    /// diff/mtime telemetry (never constants).
+    /// diff/mtime telemetry (never constants). Shares AgentInfo.live with the store's
+    /// background refresh so a full scan and a 2-minute refresh build identical sessions.
     private func attachLiveSessions(_ repos: inout [Repo], now: Date) async {
-        let sessions = await AgentProbe.sessions()
+        let sessions = await AgentProbe.sessions(now: now)
         for s in sessions {
             guard let idx = repos.indices
                 .filter({ s.cwd == repos[$0].absolutePath || s.cwd.hasPrefix(repos[$0].absolutePath + "/") })
                 .max(by: { repos[$0].absolutePath.count < repos[$1].absolutePath.count }) else { continue }
             let work = await AgentProbe.workStat(cwd: repos[idx].absolutePath, now: now)
-            repos[idx].agent = AgentInfo(
-                active: true, tool: s.tool, branch: repos[idx].build.branch, elapsed: s.elapsed,
-                filesTouched: work.filesTouched,
-                linesAdded: work.measured ? work.linesAdded : nil,
-                linesRemoved: work.measured ? work.linesRemoved : nil,
-                lastActivity: work.lastWrite.map { RelTime.ago($0, now: now) } ?? "—",
-                note: agentNote(work, clean: repos[idx].worktree.clean))
+            repos[idx].agent = AgentInfo.live(session: s, work: work,
+                                              clean: repos[idx].worktree.clean,
+                                              branch: repos[idx].build.branch, now: now)
         }
-    }
-
-    /// Honest one-line session summary built from the measured diff — no constants.
-    private func agentNote(_ work: AgentProbe.WorkStat, clean: Bool) -> String {
-        if work.filesTouched > 0 {
-            return "\(work.filesTouched) file\(work.filesTouched == 1 ? "" : "s") changed since last commit"
-        }
-        return clean ? "live session · working tree clean" : "untracked changes in the working tree"
     }
 
     /// Derive gates/compliance/health/surprises for every repo, in TWO passes so
