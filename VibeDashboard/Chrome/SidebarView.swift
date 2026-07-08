@@ -9,24 +9,19 @@ struct SidebarView: View {
     @Environment(FleetStore.self) private var store
     @State private var collapsed: Set<String> = []
 
-    private struct RowItem: Identifiable { let repo: Repo; let depth: Int; let hasChildren: Bool; var id: String { repo.id } }
-
-    private var rows: [RowItem] {
-        let f = store.fleet
-        var out: [RowItem] = []
-        var placed = Set<String>()   // no repo id twice (nested workspaces would duplicate)
-        for ws in f.workspaces where ws.parentId == nil {
-            guard placed.insert(ws.id).inserted else { continue }
-            out.append(RowItem(repo: ws, depth: 0, hasChildren: true))
-            if !collapsed.contains(ws.id) {
-                let kids = ws.children.compactMap { f.byId[$0] }.sorted { $0.name.lowercased() < $1.name.lowercased() }
-                for c in kids where placed.insert(c.id).inserted {
-                    out.append(RowItem(repo: c, depth: 1, hasChildren: false))
-                }
+    /// Walk the pre-order `sidebarTree`, hiding the descendants of collapsed nodes.
+    /// A collapsed node at depth `d` hides every following row with depth > d until
+    /// the tree returns to depth <= d — so collapse composes at arbitrary depth.
+    private var visibleRows: [SidebarNode] {
+        var out: [SidebarNode] = []
+        var hideBelow: Int? = nil
+        for node in store.fleet.sidebarTree {
+            if let hd = hideBelow {
+                if node.depth > hd { continue }
+                hideBelow = nil
             }
-        }
-        for r in f.leaves where r.parentId == nil && placed.insert(r.id).inserted {
-            out.append(RowItem(repo: r, depth: 0, hasChildren: false))
+            out.append(node)
+            if node.hasChildren && collapsed.contains(node.id) { hideBelow = node.depth }
         }
         return out
     }
@@ -59,12 +54,17 @@ struct SidebarView: View {
 
             ScrollView {
                 LazyVStack(spacing: 1) {
-                    ForEach(rows) { item in
-                        SidebarRow(repo: item.repo, depth: item.depth, hasChildren: item.hasChildren,
-                                   expanded: !collapsed.contains(item.repo.id),
-                                   selected: app.selectedId == item.repo.id,
-                                   onSelect: { app.openRepo(item.repo.id) },
-                                   onToggle: { toggle(item.repo.id) })
+                    ForEach(visibleRows) { node in
+                        if node.kind == .group {
+                            SidebarGroupRow(node: node, expanded: !collapsed.contains(node.id),
+                                            onToggle: { toggle(node.id) })
+                        } else if let repo = store.fleet.byId[node.repoId ?? ""] {
+                            SidebarRow(repo: repo, depth: node.depth, hasChildren: node.hasChildren,
+                                       expanded: !collapsed.contains(node.id),
+                                       selected: app.selectedId == repo.id,
+                                       onSelect: { app.openRepo(repo.id) },
+                                       onToggle: { toggle(node.id) })
+                        }
                     }
                 }
                 .padding(.horizontal, 9).padding(.bottom, Theme.space.x2_5)
@@ -171,6 +171,11 @@ private struct SidebarRow: View {
         .onHover { hover = $0 }
         .onTapGesture(perform: onSelect)
         .contextMenu {
+            // Re-probe just THIS repo's git state (worktree/build/scm) and re-grade it
+            // in place — no full fleet sweep. store.rescan(repoId:) already scopes this.
+            Button("Refresh this repo") { Task { await store.rescan(repoId: repo.id) } }
+                .disabled(store.isScanning)
+            Divider()
             Button(store.isIgnored(repo.id) ? "Show in fleet" : "Ignore repo") { store.toggleIgnore(repo.id) }
             Divider()
             Button("Reveal in Finder") {
@@ -180,5 +185,37 @@ private struct SidebarRow: View {
                 NSWorkspace.shared.open(URL(fileURLWithPath: (repo.absolutePath as NSString).expandingTildeInPath))
             }
         }
+    }
+}
+
+/// A structural directory in the sidebar — a plain grouping dir (`__APPS`, `macOS`,
+/// `__INFRASTRUCTURE`) that contains codebases but is NOT itself a workspace. It is
+/// deliberately inert: a folder glyph + muted name + a disclosure to fold the group,
+/// and nothing else — no selection, no hover highlight, no navigation, no actions.
+private struct SidebarGroupRow: View {
+    let node: SidebarNode
+    let expanded: Bool
+    var onToggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Button(action: onToggle) { Disclosure(open: expanded) }.buttonStyle(.plain)
+            VibeIcon(expanded ? "folder-open" : "folder", size: 13, color: Theme.color.textFaint)
+            Text(node.name)
+                .font(VibeFont.mono(VibeFont.size.sm, .medium))
+                .foregroundStyle(Theme.color.textMuted)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            if node.repoCount > 0 {
+                Text("\(node.repoCount)")
+                    .font(VibeFont.mono(VibeFont.size.xxs))
+                    .foregroundStyle(Theme.color.textGhost)
+            }
+        }
+        .padding(.leading, 8 + CGFloat(node.depth) * 15).padding(.trailing, 9)
+        .frame(height: Theme.layout.rowH)
+        .contentShape(Rectangle())
+        .help(node.absolutePath)
+        // No onTapGesture / hover state / contextMenu: structural node, not clickable.
     }
 }

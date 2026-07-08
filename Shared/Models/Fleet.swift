@@ -10,6 +10,7 @@ import Foundation
 struct ScannerState: Sendable, Hashable {
     var host: String = "localhost"
     var root: String = "~/Code"
+    var rootsAbs: [String] = []      // absolute scan roots — rides here so re-assembly (visibility/single-repo rescan) rebuilds the sidebar tree against the same roots the scan used
     var lastSweepAt: Date? = nil     // real completion time of the last scan (nil = never swept)
     var swept: String = "—"          // real wall-clock duration of the last scan ("12.3 ms")
     var scanning: Bool = false
@@ -47,6 +48,28 @@ struct TreeNode: Identifiable, Sendable, Hashable {
     var id: String { repoId }
 }
 
+/// A node in the sidebar's filesystem tree.
+///
+/// The sidebar mirrors the on-disk shape of the scan root. A `repo` node is a real
+/// managed repo (a plain repo OR a `workspace` with a WORKSPACE.yaml) — selectable,
+/// and collapsible when it nests children. A `group` node is a plain intermediate
+/// directory that merely *contains* codebases but is not itself initialized as a
+/// workspace (e.g. `__APPS`, `macOS`, `__INFRASTRUCTURE`): purely structural — it
+/// groups the repos beneath it and is never selectable / navigable.
+enum SidebarNodeKind: String, Sendable, Hashable { case repo, group }
+
+struct SidebarNode: Identifiable, Sendable, Hashable {
+    var kind: SidebarNodeKind
+    var id: String            // STABLE + UNIQUE ForEach id: repo.id for repos, "group:<absPath>" for groups
+    var depth: Int            // 0 == just below the scan root; drives indentation
+    var repoId: String?       // the repo's id (nil for group nodes — the "not selectable" contract)
+    var name: String          // display name (repo name / directory basename)
+    var absolutePath: String  // canonical absolute path — the dedup key (never emitted twice)
+    var hasChildren: Bool     // has at least one child row (→ show a disclosure control)
+    var isWorkspace: Bool     // repo nodes: a WORKSPACE.yaml workspace
+    var repoCount: Int        // group nodes: number of repo descendants; 0 for repo nodes
+}
+
 struct SkillUser: Identifiable, Sendable, Hashable {
     var repoId: String
     var name: String
@@ -82,6 +105,7 @@ struct Fleet: Sendable {
     var leaves: [Repo] = []
     var workspaces: [Repo] = []
     var tree: [TreeNode] = []
+    var sidebarTree: [SidebarNode] = []   // filesystem tree (repos + structural group dirs) for the sidebar
     var totals = FleetTotals()
     var findings: [Finding] = []
     var skillRollup: [SkillRollup] = []
@@ -125,6 +149,7 @@ struct Fleet: Sendable {
             tree.append(TreeNode(repoId: r.id, depth: 0))
         }
         f.tree = tree
+        f.sidebarTree = buildSidebarTree(repos: repos, roots: scanner.rootsAbs)
 
         let leaves = f.leaves
         var t = FleetTotals()
@@ -164,5 +189,82 @@ struct Fleet: Sendable {
                                issues: users.filter { $0.status != .ok }.count)
         }
         return f
+    }
+
+    /// Build the sidebar's filesystem tree from the repos' absolute paths.
+    ///
+    /// The sidebar must mirror the on-disk shape of the scan root, so the segments
+    /// *between* a root and each repo become nodes: a segment that is itself a managed
+    /// repo/workspace is a selectable `repo` node; a segment that only groups codebases
+    /// (e.g. `__APPS/macOS`) is a structural `group` node. The tree is recursive to
+    /// arbitrary depth — workspace → workspace → repo all nest naturally because depth
+    /// is just the segment index. Output is a pre-order flattened list (`depth` drives
+    /// indentation); the view applies collapse. Every absolute path is emitted at most
+    /// once (`emitted`), so no repo is ever listed twice — and two repos that merely
+    /// share a *name* keep their distinct paths and both appear.
+    static func buildSidebarTree(repos: [Repo], roots: [String]) -> [SidebarNode] {
+        func norm(_ p: String) -> String {
+            var s = (p as NSString).expandingTildeInPath
+            while s.count > 1 && s.hasSuffix("/") { s.removeLast() }
+            return s
+        }
+        // Known repo paths → repo (defensive dedup: distinct paths are expected).
+        var repoByPath: [String: Repo] = [:]
+        for r in repos { let p = norm(r.absolutePath); if repoByPath[p] == nil { repoByPath[p] = r } }
+        let normRoots = roots.map(norm).sorted { $0.count > $1.count }   // longest root wins
+
+        // Assemble the directory forest keyed by absolute path (each path a node once).
+        var children: [String: [String]] = [:]
+        var childSeen: [String: Set<String>] = [:]
+        var topSeen = Set<String>()
+        var topOrder: [String] = []
+        func link(_ parent: String?, _ child: String) {
+            if let par = parent {
+                if childSeen[par, default: []].insert(child).inserted { children[par, default: []].append(child) }
+            } else if topSeen.insert(child).inserted { topOrder.append(child) }
+        }
+        for r in repos {
+            let p = norm(r.absolutePath)
+            guard let root = normRoots.first(where: { p == $0 || p.hasPrefix($0 + "/") }) else {
+                link(nil, p); continue   // no matching root → place at top, no group ancestors
+            }
+            var rel = String(p.dropFirst(root.count))
+            while rel.hasPrefix("/") { rel.removeFirst() }
+            let segs = rel.split(separator: "/").map(String.init)
+            guard !segs.isEmpty else { continue }   // repo == root (shouldn't happen)
+            var prefix = root, parent: String? = nil
+            for seg in segs { prefix += "/" + seg; link(parent, prefix); parent = prefix }
+        }
+
+        // Flatten pre-order; assign depth; dedup by absolute path.
+        func lastComp(_ path: String) -> String { (path as NSString).lastPathComponent }
+        func sortKids(_ paths: [String]) -> [String] {
+            paths.sorted { a, b in
+                let la = lastComp(a).lowercased(), lb = lastComp(b).lowercased()
+                return la == lb ? a < b : la < lb
+            }
+        }
+        func repoDescendants(_ path: String) -> Int {
+            (children[path] ?? []).reduce(0) { $0 + (repoByPath[$1] != nil ? 1 : 0) + repoDescendants($1) }
+        }
+        var out: [SidebarNode] = []
+        var emitted = Set<String>()
+        func visit(_ path: String, _ depth: Int) {
+            guard emitted.insert(path).inserted else { return }
+            let repo = repoByPath[path]
+            out.append(SidebarNode(
+                kind: repo != nil ? .repo : .group,
+                id: repo.map(\.id) ?? ("group:" + path),
+                depth: depth,
+                repoId: repo?.id,
+                name: repo?.name ?? lastComp(path),
+                absolutePath: path,
+                hasChildren: !(children[path] ?? []).isEmpty,
+                isWorkspace: repo?.isWorkspace ?? false,
+                repoCount: repo == nil ? repoDescendants(path) : 0))
+            for k in sortKids(children[path] ?? []) { visit(k, depth + 1) }
+        }
+        for t in sortKids(topOrder) { visit(t, 0) }
+        return out
     }
 }

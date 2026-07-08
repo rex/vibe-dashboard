@@ -103,9 +103,15 @@ private struct RepoTableRow: View {
             HStack(spacing: 10) {
                 if depth > 0 { VibeIcon("corner-down-right", size: 13, color: Theme.color.textGhost) }
                 HealthDot(health: repo.health, size: 9)
+                RepoLogoThumb(repo: repo, size: 24)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(repo.name).font(VibeFont.mono(VibeFont.size.sm, .medium)).foregroundStyle(Theme.color.textPrimary).lineLimit(1)
-                    Text(repo.desc).font(VibeFont.sans(VibeFont.size.xxs)).foregroundStyle(Theme.color.textMuted).lineLimit(1)
+                    HStack(spacing: Theme.space.x1_5) {
+                        Text(repo.name).font(VibeFont.mono(VibeFont.size.sm, .medium)).foregroundStyle(Theme.color.textPrimary).lineLimit(1)
+                        RepoBadges(repo: repo, size: 14)
+                    }
+                    // Full ~-collapsed path — how same-named repos are told apart.
+                    Text(repo.path).font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textMuted)
+                        .lineLimit(1).truncationMode(.middle)
                 }
             }
             .padding(.leading, CGFloat(depth) * 18)
@@ -133,7 +139,7 @@ private struct RepoTableRow: View {
         .background(hover ? Theme.color.surfaceRaised : .clear)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.color.borderSubtle).frame(height: 1) }
         .contentShape(Rectangle())
-        .help("\(repo.name) · \(repo.path)")
+        .help("\(repo.name) · \(repo.absolutePath)" + (repo.desc.isEmpty ? "" : "\n\(repo.desc)"))
         .opacity(store.isIgnored(repo.id) ? 0.45 : 1)
         .onHover { hover = $0 }
         .onTapGesture(perform: onTap)

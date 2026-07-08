@@ -90,6 +90,7 @@ struct FleetScanner: Sendable {
         let elapsedMs = String(format: "%.1f ms", Date().timeIntervalSince(start) * 1000)
         let leaves = repos.filter { $0.kind != .workspace }
         let scanner = ScannerState(host: host, root: displayPath(roots.first ?? "~/Code"),
+                                   rootsAbs: roots,
                                    lastSweepAt: now, swept: elapsedMs,
                                    lastSweep: RelTime.ago(now, now: now))
         var activity: [ActivityEntry] = []

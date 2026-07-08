@@ -27,11 +27,14 @@ enum GitProbe {
             f.commitDateRel = RelTime.ago(d, now: now)
         }
 
-        // Worktree cleanliness.
+        // Worktree cleanliness. Keep the RAW porcelain lines (capped so a pathological
+        // tree can't balloon the model/hash) alongside the count — the Overview renders
+        // the real changed-file list, grouped, not just a number.
         let status = await ProcessRunner.git(["status", "--porcelain"], cwd: abs)
         let dirtyLines = status.stdout.split(separator: "\n").filter { !$0.isEmpty }
         f.worktree.unstaged = dirtyLines.count
         f.worktree.clean = dirtyLines.isEmpty
+        f.worktree.statusLines = dirtyLines.prefix(500).map(String.init)
 
         // Unpushed (ahead of upstream). When the branch has no upstream configured,
         // `@{u}..HEAD` fails and `line` returns nil — that used to silently leave

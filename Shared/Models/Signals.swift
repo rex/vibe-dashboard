@@ -15,6 +15,10 @@ struct WorktreeState: Sendable, Hashable {
     var unstaged: Int = 0
     var unpushed: Int = 0
     var signed: Bool = true
+    /// The real `git status --porcelain` lines (capped), so the UI can render the
+    /// actual changed-file list — grouped staged/modified/untracked/renamed — not
+    /// just the counts above. Empty ⇒ nothing to show ⇒ an honest "clean" panel.
+    var statusLines: [String] = []
 }
 
 enum WorktreeLife: String, Sendable, Hashable { case active, stale, abandoned
@@ -123,4 +127,102 @@ struct Finding: Identifiable, Sendable, Hashable {
     var repoId: String? = nil
     var repoName: String? = nil
     var id: String { (repoId ?? "") + "·" + pass + "·" + what }
+}
+
+// MARK: - Git status grouping (porcelain → readable buckets)
+
+/// One changed path in a grouped `git status` view — a single file (or `old → new`
+/// for a rename/copy), tagged with the raw 2-char porcelain XY code it came from.
+struct GitStatusEntry: Identifiable, Sendable, Hashable {
+    var code: String     // porcelain XY prefix, e.g. " M", "??", "R "
+    var path: String     // display path; "old → new" for renames/copies
+    var id: String { code + "·" + path }
+}
+
+/// The bucket a change falls into, with a glanceable tone + glyph. Declaration
+/// order is the display order of the git-status panel (loudest first).
+enum GitStatusKind: String, Sendable, Hashable, CaseIterable {
+    case conflicted, staged, renamed, modified, deleted, untracked
+
+    var label: String {
+        switch self {
+        case .conflicted: return "conflicted"
+        case .staged: return "staged"
+        case .renamed: return "renamed"
+        case .modified: return "modified"
+        case .deleted: return "deleted"
+        case .untracked: return "untracked"
+        }
+    }
+    var tone: VibeTone {
+        switch self {
+        case .conflicted: return .danger
+        case .staged: return .ok
+        case .renamed: return .info
+        case .modified: return .warn
+        case .deleted: return .danger
+        case .untracked: return .neutral
+        }
+    }
+    var icon: String {
+        switch self {
+        case .conflicted: return "octagon-alert"
+        case .staged: return "check"
+        case .renamed: return "arrow-right"
+        case .modified: return "file-text"
+        case .deleted: return "trash-2"
+        case .untracked: return "plus"
+        }
+    }
+}
+
+struct GitStatusGroup: Identifiable, Sendable, Hashable {
+    var kind: GitStatusKind
+    var entries: [GitStatusEntry]
+    var id: String { kind.rawValue }
+}
+
+/// Pure porcelain-v1 → grouped-status parsing. `git status --porcelain` emits one
+/// `XY <path>` line per change (`R  old -> new` for renames, `?? path` for
+/// untracked). We bucket by the most meaningful axis so a panel reads the way a
+/// human would summarize the tree. Pure + testable — no IO, no side effects.
+enum GitStatus {
+    static func group(_ lines: [String]) -> [GitStatusGroup] {
+        var buckets: [GitStatusKind: [GitStatusEntry]] = [:]
+        for raw in lines {
+            guard raw.count >= 3 else { continue }             // "XY path"
+            let code = String(raw.prefix(2))
+            let rest = String(raw.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+            guard !rest.isEmpty else { continue }
+            let x = code.first ?? " "
+            let y = code.dropFirst().first ?? " "
+            let kind = classify(x: x, y: y)
+            buckets[kind, default: []].append(
+                GitStatusEntry(code: code, path: displayPath(rest, renamed: kind == .renamed)))
+        }
+        return GitStatusKind.allCases.compactMap { k in
+            buckets[k].map { GitStatusGroup(kind: k, entries: $0) }
+        }
+    }
+
+    /// XY porcelain code → bucket. Check order encodes priority: an unmerged pair is
+    /// a conflict; `??` is untracked; an R/C on either side is a rename/copy; a D on
+    /// either side is a deletion; any other index letter is a staged change; else a
+    /// worktree modification. Pure + testable.
+    static func classify(x: Character, y: Character) -> GitStatusKind {
+        let conflict: Set<String> = ["DD", "AA", "AU", "UD", "UA", "DU", "UU"]
+        if conflict.contains(String([x, y])) { return .conflicted }
+        if x == "?" && y == "?" { return .untracked }
+        if x == "R" || y == "R" || x == "C" || y == "C" { return .renamed }
+        if x == "D" || y == "D" { return .deleted }
+        if x != " " && x != "?" { return .staged }             // staged index change
+        return .modified                                       // unstaged worktree edit
+    }
+
+    /// A rename/copy line is `old -> new`; render it with a nice arrow. Everything
+    /// else passes through unchanged. Pure + testable.
+    static func displayPath(_ s: String, renamed: Bool) -> String {
+        guard renamed, let r = s.range(of: " -> ") else { return s }
+        return String(s[..<r.lowerBound]) + " → " + String(s[r.upperBound...])
+    }
 }

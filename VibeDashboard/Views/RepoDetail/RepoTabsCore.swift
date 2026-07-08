@@ -22,12 +22,12 @@ struct RepoOverviewTab: View {
                     .tracking(VibeFont.size.xxl * VibeFont.track.snug)
                     .foregroundStyle(Theme.color.textBright)
 
-                AppWordmark(name: repo.name, desc: repo.desc, stack: repo.stack,
-                            emblem: repo.emblem, live: repo.agentActive)
+                // Identity header: logo · name · FULL PATH · glanceable badges.
+                RepoOverviewHeader(repo: repo)
 
                 if repo.management != .skeleton { ManagementBanner(level: repo.management) }
-                OverviewAlerts(repo: repo)
 
+                // Repository + Compliance first — the most actionable, glanceable state.
                 HStack(alignment: .top, spacing: Theme.space.x4) {
                     VibePanel(title: "REPOSITORY") { metaRows }
                         .frame(maxWidth: RepoTabLayout.metaColumns)
@@ -47,6 +47,12 @@ struct RepoOverviewTab: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+
+                // The real git change-set, grouped.
+                GitStatusPanel(repo: repo)
+
+                // Needs-attention / findings LAST — surfaced, but below the actionable state.
+                OverviewAlerts(repo: repo)
             }
             .padding(Theme.space.x5)
         }
