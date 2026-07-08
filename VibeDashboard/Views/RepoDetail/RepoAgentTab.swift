@@ -77,11 +77,14 @@ struct RepoAgentTab: View {
         VibePanel(title: "doc bloat", icon: "file-warning") {
             VStack(alignment: .leading, spacing: Theme.space.x3) {
                 DocBloatRow(label: "TASK_STATE.md", lines: repo.docs.taskState.lines,
-                            soft: DocLimit.taskSoft, hard: DocLimit.taskHard)
+                            soft: DocLimit.taskSoft, hard: DocLimit.taskHard,
+                            present: repo.docs.taskState.present)
                 DocBloatRow(label: "AGENTS.md", lines: repo.docs.agentsMd.lines,
-                            soft: DocLimit.mdSoft, hard: DocLimit.mdHard)
+                            soft: DocLimit.mdSoft, hard: DocLimit.mdHard,
+                            present: repo.docs.agentsMd.present)
                 DocBloatRow(label: "CLAUDE.md", lines: repo.docs.claudeMd.lines,
-                            soft: DocLimit.mdSoft, hard: DocLimit.mdHard)
+                            soft: DocLimit.mdSoft, hard: DocLimit.mdHard,
+                            present: repo.docs.claudeMd.present)
             }
         }
     }
@@ -159,7 +162,15 @@ private struct LiveSessionCard: View {
     let repo: Repo
     let agent: AgentInfo
 
-    private var accent: Color { repo.health == .danger ? Theme.color.danger : Theme.color.warn }
+    private var isIdle: Bool { agent.state == .idle }
+    private var liveTone: VibeTone { repo.health == .danger ? .danger : .warn }
+    // ACTIVE keeps the live amber (or danger) treatment; IDLE reads muted so a quiet
+    // 15–60m session never masquerades as bright-live (that would be fake liveness).
+    private var accent: Color { isIdle ? Theme.color.textMuted : Theme.color.tone(liveTone) }
+    private var cardBg: Color { isIdle ? Theme.color.surfaceSunken : Theme.color.warnSurfaceSoft }
+    private var cardLine: Color { isIdle ? Theme.color.border : Theme.color.warnLine }
+    private var tileBg: Color { isIdle ? Theme.color.surfaceSunken : Theme.color.toneSurface(liveTone) }
+    private var tileLine: Color { isIdle ? Theme.color.border : Theme.color.toneLine(liveTone) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.space.x3) {
@@ -167,10 +178,10 @@ private struct LiveSessionCard: View {
             HStack(spacing: Theme.space.x2_5) {
                 VibeIcon(agentToolIcon(agent.tool), size: 17, color: accent)
                     .frame(width: 34, height: 34)
-                    .background(Theme.color.toneSurface(repo.health == .danger ? .danger : .warn))
+                    .background(tileBg)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous)
-                        .strokeBorder(Theme.color.toneLine(repo.health == .danger ? .danger : .warn), lineWidth: 1))
+                        .strokeBorder(tileLine, lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: Theme.space.x0_5) {
                     HStack(spacing: Theme.space.x1_5) {
@@ -186,7 +197,7 @@ private struct LiveSessionCard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                AgentPulse(active: true, color: accent, size: 14)
+                AgentPulse(active: !isIdle, color: isIdle ? Theme.color.textFaint : accent, size: 14)
             }
 
             // note
@@ -203,6 +214,12 @@ private struct LiveSessionCard: View {
                     Text("+\(added.formatted())").foregroundStyle(Theme.color.ok)
                     Text("\u{2212}\(removed.formatted())").foregroundStyle(Theme.color.danger)
                 }
+                // IDLE surfaces the honest "idle · last write 22m ago"; amber "idle"
+                // is the one warm note on an otherwise muted card.
+                if isIdle {
+                    Text(" · ").foregroundStyle(Theme.color.textGhost)
+                    Text("idle").foregroundStyle(Theme.color.warn)
+                }
                 Text(" · last write \(agent.lastActivity)").foregroundStyle(Theme.color.textMuted)
             }
             .font(VibeFont.mono(VibeFont.size.xxs))
@@ -210,10 +227,10 @@ private struct LiveSessionCard: View {
         }
         .padding(Theme.space.x3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.color.warnSurfaceSoft)
+        .background(cardBg)
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius.md, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.radius.md, style: .continuous)
-            .strokeBorder(Theme.color.warnLine, lineWidth: 1))
+            .strokeBorder(cardLine, lineWidth: 1))
     }
 }
 
@@ -231,6 +248,8 @@ private struct WorktreeRow: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+            // A LINKED worktree sitting on uncommitted work is a real surprise — flag it.
+            if wt.dirty { Pill(text: "dirty", tone: .warn) }
             StatusBadge(text: wt.state.rawValue, tone: wt.state.tone, small: true)
             Text(wt.created)
                 .font(VibeFont.mono(VibeFont.size.xxs))
@@ -253,6 +272,7 @@ private struct DocBloatRow: View {
     let lines: Int
     let soft: Double
     let hard: Double
+    var present: Bool = true
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.space.x1) {
             HStack {
@@ -260,130 +280,29 @@ private struct DocBloatRow: View {
                     .font(VibeFont.mono(VibeFont.size.xs, .medium))
                     .foregroundStyle(Theme.color.textPrimary)
                 Spacer(minLength: Theme.space.x2)
-                Text("soft \(Int(soft)) · hard \(Int(hard))")
-                    .font(VibeFont.mono(VibeFont.size.xxs))
-                    .foregroundStyle(Theme.color.textGhost)
+                if present {
+                    Text("soft \(Int(soft)) · hard \(Int(hard))")
+                        .font(VibeFont.mono(VibeFont.size.xxs))
+                        .foregroundStyle(Theme.color.textGhost)
+                } else {
+                    StatusBadge(text: "missing", tone: .warn, small: true, showDot: false)
+                }
             }
-            LimitBar(value: Double(lines), soft: soft, hard: hard, unit: " ln")
-        }
-    }
-}
-
-// MARK: - TASK_STATE.md markdown
-
-/// A tiny, terse markdown renderer for TASK_STATE.md — headings, checkboxes,
-/// bullets, blockquotes, body text, and inline `code` spans. Line-based, no
-/// dependencies; everything mono except the top-level `#` heading (Grotesk).
-struct TaskMarkdownView: View {
-    let text: String
-
-    private enum Block {
-        case h1(String), h2(String), h3(String)
-        case check(Bool, String)
-        case bullet(String)
-        case quote(String)
-        case body(String)
-        case spacer
-    }
-
-    // Parsed lines keyed by their original index (stable identity for ForEach).
-    private var blocks: [(Int, Block)] {
-        text.split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-            .enumerated()
-            .map { ($0.offset, Self.parse($0.element)) }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.space.x1_5) {
-            ForEach(blocks, id: \.0) { _, block in
-                row(for: block)
+            if present {
+                LimitBar(value: Double(lines), soft: soft, hard: hard, unit: " ln")
+            } else {
+                // A MISSING required doc is NOT a 0-line doc — render an explicit hollow
+                // track, never a healthy-looking empty bar that reads identical to one.
+                HStack(spacing: Theme.space.x2_5) {
+                    Capsule().fill(Theme.color.surfaceActive)
+                        .frame(height: 6)
+                        .overlay(Capsule().strokeBorder(Theme.color.warnLine, lineWidth: 1))
+                    Text("absent")
+                        .font(VibeFont.mono(VibeFont.size.xs, .bold))
+                        .foregroundStyle(Theme.color.warn)
+                        .frame(minWidth: 46, alignment: .trailing)
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // ---- parse ----
-
-    private static func parse(_ raw: String) -> Block {
-        let line = raw
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty { return .spacer }
-        if line.hasPrefix("### ") { return .h3(String(line.dropFirst(4))) }
-        if line.hasPrefix("## ")  { return .h2(String(line.dropFirst(3))) }
-        if line.hasPrefix("# ")   { return .h1(String(line.dropFirst(2))) }
-        if trimmed.hasPrefix("- [x] ") || trimmed.hasPrefix("- [X] ") {
-            return .check(true, String(trimmed.dropFirst(6)))
-        }
-        if trimmed.hasPrefix("- [ ] ") { return .check(false, String(trimmed.dropFirst(6))) }
-        if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") { return .bullet(String(trimmed.dropFirst(2))) }
-        if trimmed.hasPrefix("> ") { return .quote(String(trimmed.dropFirst(2))) }
-        return .body(line)
-    }
-
-    // ---- render ----
-
-    @ViewBuilder private func row(for block: Block) -> some View {
-        switch block {
-        case .h1(let s):
-            Text(s)
-                .font(VibeFont.sans(VibeFont.size.lg, .semibold))
-                .tracking(VibeFont.size.lg * VibeFont.track.snug)
-                .foregroundStyle(Theme.color.textBright)
-                .padding(.top, Theme.space.x1)
-        case .h2(let s):
-            Text(s)
-                .font(VibeFont.mono(VibeFont.size.md, .bold))
-                .foregroundStyle(Theme.color.textPrimary)
-                .padding(.top, Theme.space.x1)
-        case .h3(let s):
-            Text(s.uppercased())
-                .font(VibeFont.mono(VibeFont.size.xs, .bold))
-                .tracking(VibeFont.size.xs * VibeFont.track.label)
-                .foregroundStyle(Theme.color.textSecondary)
-        case .check(let done, let s):
-            HStack(alignment: .firstTextBaseline, spacing: Theme.space.x2) {
-                VibeIcon(done ? "check-circle-2" : "square-dashed", size: 13,
-                         color: done ? Theme.color.ok : Theme.color.textFaint)
-                inline(s)
-                    .strikethrough(done, color: Theme.color.textGhost)
-                    .foregroundStyle(done ? Theme.color.textMuted : Theme.color.textPrimary)
-            }
-        case .bullet(let s):
-            HStack(alignment: .firstTextBaseline, spacing: Theme.space.x2) {
-                Text("·").font(VibeFont.mono(VibeFont.size.sm, .bold)).foregroundStyle(Theme.color.textFaint)
-                inline(s).foregroundStyle(Theme.color.textSecondary)
-            }
-            .padding(.leading, Theme.space.x1)
-        case .quote(let s):
-            HStack(spacing: Theme.space.x2_5) {
-                Rectangle().fill(Theme.color.accent).frame(width: 2)
-                inline(s).foregroundStyle(Theme.color.textMuted)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-        case .body(let s):
-            inline(s).foregroundStyle(Theme.color.textSecondary)
-        case .spacer:
-            Spacer().frame(height: Theme.space.x1)
-        }
-    }
-
-    // ---- inline `code` spans ----
-
-    /// Render a line as mono body text, styling backtick-delimited spans as code.
-    private func inline(_ s: String) -> Text {
-        guard s.contains("`") else {
-            return Text(s).font(VibeFont.mono(VibeFont.size.sm))
-        }
-        var out = Text("")
-        var isCode = false
-        for segment in s.components(separatedBy: "`") {
-            let piece = isCode
-                ? Text(segment).font(VibeFont.mono(VibeFont.size.sm, .medium)).foregroundColor(Theme.color.accent)
-                : Text(segment).font(VibeFont.mono(VibeFont.size.sm))
-            out = out + piece
-            isCode.toggle()
-        }
-        return out
     }
 }

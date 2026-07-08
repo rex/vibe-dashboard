@@ -111,11 +111,15 @@ struct RepoBadges: View {
 struct RepoLogoThumb: View {
     let repo: Repo
     var size: CGFloat = 44
-    /// Emblem-fallback liveness. OFF by default so repeated fleet rows never spin up a
+    /// Live-session marker gate. OFF by default so repeated fleet rows never spin up a
     /// per-row timer (the emblem's live cursor is a periodic TimelineView); the single
-    /// repo header opts in with `live: repo.agentActive`.
+    /// repo header opts in with `live: repo.agentActive`. When ON, `liveState` splits it:
+    /// ACTIVE earns the lime cursor, IDLE only a muted amber dot — never bright-live.
     var live: Bool = false
     private var corner: CGFloat { size * 0.235 }
+    // Only surface liveness when the caller opts in AND the repo actually has a live
+    // session; then the session's own state (active <15m / idle 15–60m) drives the mark.
+    private var liveState: AgentState? { live ? repo.agent?.state : nil }
     #if canImport(AppKit)
     @State private var image: NSImage?
     #endif
@@ -137,6 +141,7 @@ struct RepoLogoThumb: View {
             fallback
             #endif
         }
+        .overlay(alignment: .bottomTrailing) { idleMark }
         #if canImport(AppKit)
         .task(id: repo.absolutePath) {
             let data = await RepoIconCache.shared.thumbnailData(forRepoDir: repo.absolutePath)
@@ -146,6 +151,22 @@ struct RepoLogoThumb: View {
     }
 
     private var fallback: some View {
-        AppEmblem(emblem: repo.emblem, stack: repo.stack, size: size, live: live)
+        // ACTIVE lights the emblem's lime cursor; IDLE gets no cursor (the amber dot
+        // below stands in) so a quiet session is never dressed up as bright-live.
+        AppEmblem(emblem: repo.emblem, stack: repo.stack, size: size, live: liveState == .active)
+    }
+
+    /// An IDLE live session (15–60m quiet), marked with a muted amber dot on both the
+    /// real-icon and fallback-emblem thumbnails — honestly present, but visibly NOT the
+    /// lime "live" cursor that only `.active` earns. Static (no timer) — fleet-row safe.
+    @ViewBuilder private var idleMark: some View {
+        if liveState == .idle {
+            Circle()
+                .fill(Theme.color.warn)
+                .frame(width: Swift.max(5, size * 0.16), height: Swift.max(5, size * 0.16))
+                .overlay(Circle().strokeBorder(Theme.color.bgApp, lineWidth: Swift.max(1, size * 0.03)))
+                .padding(Swift.max(1, size * 0.08))
+                .help("idle agent · last write \(repo.agent?.lastActivity ?? "—")")
+        }
     }
 }

@@ -5,6 +5,15 @@
 import SwiftUI
 
 // MARK: - Apply-skill sheet
+//
+// DEAD PATH — nothing reaches this sheet. It is opened ONLY by AppState.runFix for a
+// finding whose `fix == "apply skill"`, and the scanner (Derive.surprises) never emits
+// that verb: skills are provenance-only, so a skill is never `.missing` to "apply". A
+// clean removal spans three files outside this slice's ownership — the `.applySkill`
+// case in SheetKind (Shared/Services/AppState.swift), its route in OverlayHost.swift,
+// and the `case "apply skill"` in AppState+Actions.swift. Those must go first; deleting
+// this struct alone would break OverlayHost's reference to it. Left compiling and
+// flagged for a coordinated removal rather than half-removed here.
 
 struct ApplySkillSheet: View {
     @Environment(AppState.self) private var app
@@ -57,7 +66,11 @@ struct InstallHooksSheet: View {
             VStack(alignment: .leading, spacing: Theme.space.x3) {
                 SheetProse(text: "points git at the repo's .githooks/ via core.hooksPath — the skeleton's `make install-hooks` step. Every commit then runs the repo's pre-commit gate. Nothing else on disk is touched.")
                 FileCard(caption: "will run") {
-                    FileRow(icon: "terminal", path: "git config core.hooksPath .githooks", tone: .ok) { EmptyView() }
+                    // Derived from the SAME argument vector perform() executes
+                    // (GitWrite.hooksPathArgs) — the shown command can't drift from the
+                    // one that actually runs.
+                    FileRow(icon: "terminal", path: "git " + GitWrite.hooksPathArgs.joined(separator: " "),
+                            tone: .ok) { EmptyView() }
                 }
                 FileCard(caption: "current core.hooksPath") {
                     FileRow(icon: alreadyArmed ? "check" : "git-branch",

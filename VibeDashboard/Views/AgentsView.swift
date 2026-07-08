@@ -20,14 +20,6 @@ private func agentTool(_ id: String?) -> AgentTool {
     }
 }
 
-/// active=lime, stale=amber, abandoned=red.
-private extension WorktreeLife {
-    var badgeLabel: String { rawValue }
-}
-
-private let taskStateSoft: Double = 400
-private let taskStateHard: Double = 800
-
 /// 14pt sits between Theme.space.x3 (12) and .x4 (16); the spec calls for it
 /// on the session grid gap and SessionCard padding. Named, not magic.
 private enum AgentsLayout { static let gap14: CGFloat = 14 }
@@ -118,6 +110,10 @@ private struct SessionCard: View {
 
     private var agent: AgentInfo { repo.agent ?? AgentInfo() }
     private var tool: AgentTool { agentTool(agent.tool) }
+    private var isIdle: Bool { agent.state == .idle }
+    // ACTIVE keeps the live amber treatment; IDLE goes muted + labeled, never bright-live.
+    private var cardBg: Color { isIdle ? Theme.color.surfaceSunken : Theme.color.warnSurfaceSoft }
+    private var cardLine: Color { isIdle ? Theme.color.border : Theme.color.warnLine }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.space.x3) {
@@ -132,10 +128,10 @@ private struct SessionCard: View {
         }
         .padding(AgentsLayout.gap14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.color.warnSurfaceSoft)
+        .background(cardBg)
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius.md, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.radius.md, style: .continuous)
-            .strokeBorder(Theme.color.warnLine, lineWidth: 1))
+            .strokeBorder(cardLine, lineWidth: 1))
         .overlay(alignment: .top) {
             Rectangle().fill(Color.white.opacity(0.03)).frame(height: 1).padding(.horizontal, 1)
         }
@@ -143,12 +139,12 @@ private struct SessionCard: View {
 
     private var identityRow: some View {
         HStack(alignment: .center, spacing: Theme.space.x2_5) {
-            VibeIcon(tool.icon, size: 17, color: Theme.color.warn)
+            VibeIcon(tool.icon, size: 17, color: isIdle ? Theme.color.textMuted : Theme.color.warn)
                 .frame(width: 34, height: 34)
-                .background(Theme.color.warnSurface)
+                .background(isIdle ? Theme.color.surfaceSunken : Theme.color.warnSurface)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous)
-                    .strokeBorder(Theme.color.warnLine, lineWidth: 1))
+                    .strokeBorder(cardLine, lineWidth: 1))
             VStack(alignment: .leading, spacing: 2) {
                 Button { app.openRepo(repo.id) } label: {
                     HStack(spacing: 7) {
@@ -166,7 +162,7 @@ private struct SessionCard: View {
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            AgentPulse(active: true, color: Theme.color.warn, size: 14)
+            AgentPulse(active: !isIdle, color: isIdle ? Theme.color.textFaint : Theme.color.warn, size: 14)
         }
     }
 
@@ -180,7 +176,9 @@ private struct SessionCard: View {
                     Text("\u{2212}\(removed.formatted())").foregroundStyle(Theme.color.danger)
                 }
             }
-            Text("· last write \(agent.lastActivity)").foregroundStyle(Theme.color.textMuted)
+            // IDLE shows the honest "idle · last write 22m ago"; amber "idle" is the one warm note.
+            Text(isIdle ? "idle " : "").foregroundColor(Theme.color.warn) +
+                Text("· last write \(agent.lastActivity)").foregroundColor(Theme.color.textMuted)
         }
         .font(VibeFont.mono(VibeFont.size.xxs))
         .monospacedDigit()
@@ -276,7 +274,7 @@ private struct SprawlRow: View {
                 .buttonStyle(.plain)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            StatusBadge(text: wt.state.badgeLabel, tone: wt.state.tone, small: true)
+            StatusBadge(text: wt.state.rawValue, tone: wt.state.tone, small: true)
             // Per-row prune is gated to ABANDONED only (a stale one may be unpushed).
             if wt.state == .abandoned {
                 Button {
@@ -306,90 +304,5 @@ private struct SprawlRow: View {
     }
 }
 
-// MARK: - Doc bloat leaderboard
-
-private struct DocBloatPanel: View {
-    let repos: [Repo]
-    @Environment(AppState.self) private var app
-
-    var body: some View {
-        VibePanel(header: {
-            HStack(spacing: Theme.space.x2) {
-                PanelTitle(text: "doc bloat · TASK_STATE.md")
-                Spacer()
-                Text("soft \(Int(taskStateSoft)) · hard \(Int(taskStateHard))")
-                    .font(VibeFont.mono(VibeFont.size.xxs))
-                    .foregroundStyle(Theme.color.textMuted)
-                    .monospacedDigit()
-            }
-        }, content: {
-            if repos.isEmpty {
-                EmptyState(icon: "file-text", tone: .ok, text: "no TASK_STATE.md to weigh yet.")
-            } else {
-                VStack(alignment: .leading, spacing: Theme.space.x3) {
-                    ForEach(repos.prefix(5)) { r in
-                        VStack(alignment: .leading, spacing: Theme.space.x1_5) {
-                            Button { app.openRepo(r.id) } label: {
-                                HStack(spacing: 7) {
-                                    HealthDot(health: r.health, size: 7)
-                                    Text(r.name)
-                                        .font(VibeFont.mono(VibeFont.size.xs, .medium))
-                                        .foregroundStyle(Theme.color.textPrimary)
-                                        .lineLimit(1)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            LimitBar(value: Double(r.docs.taskState.lines), soft: taskStateSoft, hard: taskStateHard)
-                        }
-                    }
-                }
-            }
-        })
-    }
-}
-
-// MARK: - Changelog staleness
-
-private struct ChangelogStalenessPanel: View {
-    let repos: [Repo]
-    @Environment(AppState.self) private var app
-
-    var body: some View {
-        VibePanel(title: "changelog staleness", flushBody: true) {
-            if repos.isEmpty {
-                EmptyState(icon: "history", tone: .ok, text: "every CHANGELOG is current.")
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(repos.enumerated()), id: \.element.id) { idx, r in
-                        let tone = r.docs.changelog.status.tone
-                        Button { app.openRepo(r.id) } label: {
-                            HStack(spacing: Theme.space.x2_5) {
-                                VibeIcon("history", size: 14, color: Theme.color.tone(tone))
-                                Text(r.name)
-                                    .font(VibeFont.mono(VibeFont.size.sm))
-                                    .foregroundStyle(Theme.color.textPrimary)
-                                    .lineLimit(1)
-                                Spacer(minLength: Theme.space.x2)
-                                Text("\(r.docs.changelog.behind) behind · \(r.docs.changelog.lastUpdated)")
-                                    .font(VibeFont.mono(VibeFont.size.xxs))
-                                    .foregroundStyle(Theme.color.tone(tone))
-                                    .monospacedDigit()
-                                    .lineLimit(1)
-                            }
-                            .padding(.horizontal, Theme.space.x4)
-                            .padding(.vertical, Theme.space.x2_5)
-                            .frame(maxWidth: .infinity)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .overlay(alignment: .bottom) {
-                            if idx != repos.count - 1 {
-                                Rectangle().fill(Theme.color.borderSubtle).frame(height: 1)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+// Doc-bloat + changelog-staleness leaderboards live in AgentsPanels.swift (kept out of
+// this file for the 400-line hard gate).

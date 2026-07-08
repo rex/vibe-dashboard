@@ -71,7 +71,7 @@ private struct RepoInspector: View {
     @Environment(AppState.self) private var app
     var body: some View {
         HStack(spacing: Theme.space.x3) {
-            AppEmblem(emblem: repo.emblem, stack: repo.stack, size: 40, live: repo.agentActive)
+            AppEmblem(emblem: repo.emblem, stack: repo.stack, size: 40, live: repo.agent?.state == .active)
             VStack(alignment: .leading, spacing: 2) {
                 Text(repo.name).font(VibeFont.mono(VibeFont.size.md, .semibold)).foregroundStyle(Theme.color.textBright).lineLimit(1)
                 StatusBadge(text: repo.isWorkspace ? "workspace" : "\(repo.compliance)% · \(repo.health.rawValue)", tone: repo.health.tone, small: true)
