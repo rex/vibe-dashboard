@@ -5,6 +5,18 @@ disabled_rules:
   - trailing_comma
   - optional_data_string_conversion
   - todo
+  # The following three are DELIBERATE, consistent house style across the codebase —
+  # flagging them is noise that buries real signal (line-length/file-length/force-try):
+  - implicit_optional_initialization   # models write `var x: T? = nil` on purpose
+  - statement_position                 # `if … { }` newline `else if` is the house layout
+  - switch_case_alignment              # `case` aligned under `switch`, not the brace
+
+type_name:
+  # The design-token namespaces (Theme.color/space/radius/stroke/layout/motion,
+  # VibeFont.size/track, …) are DELIBERATELY lowercase enums — a house convention
+  # for `Theme.space.x4`-style call sites, not a mistake. Turn off ONLY the
+  # uppercase-start check; the length checks stay on so genuine typos still flag.
+  validates_start_with_lowercase: off
 
 line_length:
   warning: 140
@@ -16,7 +28,7 @@ type_body_length:
 
 file_length:
   warning: 300
-  error: 450          # mirrors the architecture gate's spirit (hard 400 + slack)
+  error: 400          # exactly the check-architecture hard gate — no daylight
 
 function_body_length:
   warning: 80

@@ -5,10 +5,10 @@ import SwiftUI
 /// Neutral metadata pill (.vibe-tag) — stack=python, lifecycle=brownfield.
 struct VibeTag: View {
     let text: String
-    var keyText: String? = nil
+    var keyText: String?
     var tone: VibeTone = .neutral
     var uppercase: Bool = false
-    var icon: String? = nil
+    var icon: String?
     var dot: Bool = false
 
     var body: some View {
@@ -105,7 +105,7 @@ struct SeverityTag: View {
 struct Pill: View {
     let text: String
     var tone: VibeTone = .neutral
-    var icon: String? = nil
+    var icon: String?
     var body: some View {
         HStack(spacing: 5) {
             if let icon { VibeIcon(icon, size: 11, color: fg) }
@@ -128,8 +128,12 @@ struct GradeChip: View {
     let grade: String
     var size: CGFloat = 24
     private var tone: VibeTone {
-        switch grade { case "A", "B": return .ok; case "C": return .warn
-        case "D", "F": return .danger; default: return .neutral }
+        switch grade {
+        case "A", "B": return .ok
+        case "C": return .warn
+        case "D", "F": return .danger
+        default: return .neutral
+        }
     }
     var body: some View {
         Text(grade)

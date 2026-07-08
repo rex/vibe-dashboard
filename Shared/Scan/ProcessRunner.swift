@@ -6,6 +6,7 @@ struct ProcessResult: Sendable {
     var stdout: String
     var stderr: String
     var code: Int32
+    var truncated: Bool = false   // a stream exceeded the per-stream byte cap and was clipped
     var ok: Bool { code == 0 }
     var lines: [String] { stdout.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) }
 }
@@ -17,11 +18,31 @@ enum ProcessRunner {
     private final class IOBox: @unchecked Sendable {
         private let lock = NSLock()
         private var out = Data(), err = Data()
-        func append(_ d: Data, isOut: Bool) { lock.lock(); if isOut { out.append(d) } else { err.append(d) }; lock.unlock() }
+        private var outTrunc = false, errTrunc = false
+        /// Append up to `cap` bytes per stream; bytes beyond the cap are dropped and the
+        /// stream is flagged truncated. The drain loop keeps reading past the cap
+        /// (discarding here) so the child never blocks on a full pipe.
+        func append(_ d: Data, isOut: Bool, cap: Int) {
+            lock.lock(); defer { lock.unlock() }
+            if isOut { Self.appendCapped(&out, &outTrunc, d, cap) }
+            else { Self.appendCapped(&err, &errTrunc, d, cap) }
+        }
+        private static func appendCapped(_ buf: inout Data, _ trunc: inout Bool, _ d: Data, _ cap: Int) {
+            let room = cap - buf.count
+            if room >= d.count { buf.append(d) }
+            else { if room > 0 { buf.append(d.prefix(room)) }; trunc = true }
+        }
         var stdout: String { lock.lock(); defer { lock.unlock() }; return String(decoding: out, as: UTF8.self) }
         var stderr: String { lock.lock(); defer { lock.unlock() }; return String(decoding: err, as: UTF8.self) }
+        var truncated: Bool { lock.lock(); defer { lock.unlock() }; return outTrunc || errTrunc }
     }
     private final class ProcRef: @unchecked Sendable { let p: Process; init(_ p: Process) { self.p = p } }
+
+    /// Per-stream output cap. A pathological command (a huge `git log`, a runaway build)
+    /// can emit gigabytes; we keep at most this much per stream and mark the result
+    /// `truncated` rather than ballooning memory. 12 MB dwarfs any real git/make output
+    /// this app parses, so healthy commands are never clipped.
+    private static let maxBytesPerStream = 12 * 1024 * 1024
 
     /// Run an executable and capture output. Never throws; a failure to spawn
     /// yields code = -1. Runs on a background queue. A hung child is killed after
@@ -59,11 +80,19 @@ enum ProcessRunner {
                 // sequential pipe-buffer deadlock, and no cross-QoS blocking wait.
                 let box = IOBox()
                 let group = DispatchGroup()
+                let cap = Self.maxBytesPerStream
                 for (pipe, isOut) in [(outPipe, true), (errPipe, false)] {
                     group.enter()
                     queue.async {
-                        let d = pipe.fileHandleForReading.readDataToEndOfFile()
-                        box.append(d, isOut: isOut)
+                        // Chunked drain (not readDataToEndOfFile) so memory stays CAPPED:
+                        // keep reading to EOF — the child never blocks on a full pipe — but
+                        // IOBox discards bytes past the cap and flags truncation.
+                        let handle = pipe.fileHandleForReading
+                        while true {
+                            let chunk = handle.availableData   // blocks until data, empty at EOF
+                            if chunk.isEmpty { break }
+                            box.append(chunk, isOut: isOut, cap: cap)
+                        }
                         group.leave()
                     }
                 }
@@ -81,7 +110,8 @@ enum ProcessRunner {
                 group.notify(queue: queue) {
                     proc.waitUntilExit()   // pipes at EOF → child gone → returns immediately
                     term.cancel(); kill9.cancel()
-                    cont.resume(returning: ProcessResult(stdout: box.stdout, stderr: box.stderr, code: proc.terminationStatus))
+                    cont.resume(returning: ProcessResult(stdout: box.stdout, stderr: box.stderr,
+                                                         code: proc.terminationStatus, truncated: box.truncated))
                 }
             }
         }

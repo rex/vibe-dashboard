@@ -40,6 +40,14 @@ final class AppState {
     var toasts: [ToastData] = []
     var shellLog: [ShellEntry] = []
     private var toastSeq = 0
+    /// Auto-dismiss timers, keyed by toast id, so each is cancelled on explicit
+    /// dismissal — the handle isn't discarded (no unbounded timer churn) and a
+    /// reused id can't fire a stale dismissal.
+    private var toastTimers: [Int: Task<Void, Never>] = [:]
+
+    /// Read-only view of the live auto-dismiss timers (by toast id). Surfaced so
+    /// tests can assert every dismissed toast also tears its timer down.
+    var activeToastTimerIDs: Set<Int> { Set(toastTimers.keys) }
 
     private static let navKey = "vibe.mac.nav"
 
@@ -81,10 +89,17 @@ final class AppState {
         toastSeq += 1
         let id = toastSeq
         toasts.append(ToastData(id: id, title: title, message: message, tone: tone))
-        Task { try? await Task.sleep(for: .seconds(4.4)); dismissToast(id) }
+        toastTimers[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4.4))
+            guard !Task.isCancelled else { return }
+            self?.dismissToast(id)
+        }
         return id
     }
-    func dismissToast(_ id: Int) { toasts.removeAll { $0.id == id } }
+    func dismissToast(_ id: Int) {
+        toastTimers.removeValue(forKey: id)?.cancel()
+        toasts.removeAll { $0.id == id }
+    }
 
     /// Actually run a Makefile target in the repo, streaming output to the shell console.
     func runTarget(_ repo: Repo, _ target: String, host: String) {
@@ -92,7 +107,9 @@ final class AppState {
         let pending = toast("make \(target)", "\(repo.name) · running…", .info)
         let abs = (repo.absolutePath as NSString).expandingTildeInPath
         Task {
-            let makePath = ["/opt/homebrew/bin/make", "/usr/bin/make"].first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/usr/bin/make"
+            let makeCandidates = ["/opt/homebrew/bin/make", "/usr/bin/make"]
+            let makePath = makeCandidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+                ?? "/usr/bin/make"
             let result = await ProcessRunner.run(makePath, [target], cwd: abs, timeout: 180)
             let raw = (result.stdout + (result.stderr.isEmpty ? "" : "\n" + result.stderr))
             let lines: [(text: String, tone: VibeTone)] = raw

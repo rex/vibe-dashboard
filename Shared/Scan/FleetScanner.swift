@@ -180,7 +180,12 @@ struct FleetScanner: Sendable {
         return out.sorted()
     }
     private func walk(_ dir: String, depth: Int, into out: inout Set<String>) {
-        guard depth <= 3, let items = try? FleetScanner.fm.contentsOfDirectory(atPath: dir) else { return }
+        // Cap depth so a pathological tree can't runaway, but keep it deep enough that a
+        // managed repo nested under ecosystem/workspace/... (depth 4+) is still found —
+        // the old cap of 3 made those invisible. `skipDirs` already prunes the heavy
+        // vendored trees (node_modules, .build, DerivedData, vendor, …), so the extra
+        // levels only descend real project dirs.
+        guard depth <= 6, let items = try? FleetScanner.fm.contentsOfDirectory(atPath: dir) else { return }
         for name in items where !FileProbes.skipDirs.contains(name) && !name.hasPrefix(".") {
             let abs = (dir as NSString).appendingPathComponent(name)
             guard isDir(abs) else { continue }
@@ -195,17 +200,18 @@ struct FleetScanner: Sendable {
     private func isManagedMarker(_ abs: String) -> Bool {
         ["/VIBE.yaml", "/AGENTS.md", "/.claude", "/WORKSPACE.yaml"].contains { FleetScanner.fm.fileExists(atPath: abs + $0) }
     }
-    /// Whether a repo's origin belongs to me (github acme/acme-labs/widgets or gitea git.example.com).
-    private func isOwned(_ r: Repo) -> Bool {
-        let owners = ["acme", "acme-labs", "widgets"]
-        for rem in r.scm.remotes {
-            let u = rem.url.lowercased()
-            if u.contains("git.example.com") { return true }
-            if u.contains("github.com") {
-                for o in owners where u.contains("github.com:\(o)/") || u.contains("github.com/\(o)/") { return true }
-            }
-        }
-        return false
+    /// Whether a repo belongs to me. An owned remote (github acme/acme-labs/widgets or
+    /// gitea git.example.com, in ANY url form — scp, ssh, https) wins outright. A
+    /// MANAGED repo with no recognizably-owned remote is OWNED BY DEFAULT: it already
+    /// passed the VIBE.yaml/marker filter, so it's a repo Pierce configured locally, and
+    /// dropping it — an scp/ssh remote the old literal-substring match missed, or no
+    /// remote at all — made his OWN repo invisible to the tool meant to oversee it.
+    private func isOwned(_ r: Repo) -> Bool { Self.isOwnedRepo(remotes: r.scm.remotes, managed: r.managed) }
+
+    /// Pure ownership decision — testable without constructing a full `Repo`.
+    static func isOwnedRepo(remotes: [Remote], managed: Bool) -> Bool {
+        for rem in remotes where GitProbe.isOwnedRemoteURL(rem.url) { return true }
+        return managed
     }
     private func isDir(_ path: String) -> Bool {
         var d: ObjCBool = false

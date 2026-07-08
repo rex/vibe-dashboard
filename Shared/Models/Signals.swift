@@ -22,12 +22,17 @@ enum WorktreeLife: String, Sendable, Hashable { case active, stale, abandoned
 }
 
 struct Worktree: Identifiable, Sendable, Hashable {
+    var path: String              // absolute checkout path — unique per worktree
     var branch: String
     var created: String
     var lastCommit: String
     var commits: Int
     var state: WorktreeLife
-    var id: String { branch }
+    var dirty: Bool = false        // uncommitted edits INSIDE this linked worktree (git status --porcelain)
+    // Identity is the PATH, not the branch: two worktrees can share a branch name (or
+    // the synthetic `detached@…` label), which collided under a branch-keyed id and
+    // caused ForEach identity thrash. A checkout path is unique.
+    var id: String { path }
 }
 
 struct FileLines: Identifiable, Sendable, Hashable {
