@@ -86,8 +86,15 @@ enum FileProbes {
             if skipDirs.contains(name) { en.skipDescendants(); continue }
             let rel = url.path.replacingOccurrences(of: base + "/", with: "")
             if HygieneProbe.isJunkFile(name) { w.junk.append(rel) }
-            guard exts.contains(url.pathExtension.lowercased()) else { continue }
+            let ext = url.pathExtension.lowercased()
+            let isCode = exts.contains(ext)
+            // Conflict markers are hunted across code AND common text/config/lock files;
+            // the line census (god-files) still only counts source code.
+            let scanConflicts = isCode || Reference.conflictScanExtensions.contains(ext)
+            guard isCode || scanConflicts else { continue }
             guard let data = try? Data(contentsOf: url) else { continue }
+            if scanConflicts, data.count < 4_000_000, HygieneProbe.hasConflictMarkers(data) { w.conflicts.append(rel) }
+            guard isCode else { continue }
             let lines = data.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 } + 1
             c.scanned += 1
             let excluded = excludeMatchers.contains { Glob.matches(path: rel, regex: $0) }
@@ -96,7 +103,6 @@ enum FileProbes {
                 let fl = FileLines(path: rel, lines: lines, excluded: excluded)
                 if excluded { c.excludedGodFiles.append(fl) } else { c.godFiles.append(fl) }
             }
-            if HygieneProbe.hasConflictMarkers(data) { w.conflicts.append(rel) }
             files.append(FileLines(path: rel, lines: lines, excluded: excluded))
             if c.scanned > 5000 { break }   // safety cap
         }

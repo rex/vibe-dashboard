@@ -101,3 +101,36 @@ struct CensusExcludeTests {
         #expect(w.census.excludedGodFiles.map(\.path) == ["Sources/Big.swift"])
     }
 }
+
+/// Merge-conflict markers must be caught in config/doc/lock files too — a conflict
+/// abandoned in package.json is just as much a "green build is lying" as one in code.
+@Suite("Conflict-marker scan scope")
+struct ConflictScanTests {
+    private func tempRepoRaw(_ files: [String: String]) -> String {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("conflict-test-" + UUID().uuidString)
+        for (rel, body) in files {
+            let url = dir.appendingPathComponent(rel)
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? body.write(to: url, atomically: true, encoding: .utf8)
+        }
+        return dir.path
+    }
+    private let conflict = "{\n<<<<<<< HEAD\n  \"a\": 1\n=======\n  \"a\": 2\n>>>>>>> branch\n}\n"
+
+    @Test("conflict markers in package.json and README.md are detected")
+    func nonCodeConflicts() {
+        let repo = tempRepoRaw(["package.json": conflict, "README.md": conflict, "clean.swift": "let x = 1\n"])
+        let w = FileProbes.walk(repo, soft: 250, hard: 400, ansible: false)
+        #expect(w.conflicts.contains("package.json"))
+        #expect(w.conflicts.contains("README.md"))
+        #expect(!w.conflicts.contains("clean.swift"))
+    }
+
+    @Test("conflict markers in a .swift file are still detected")
+    func codeConflicts() {
+        let repo = tempRepoRaw(["Sources/A.swift": "<<<<<<< HEAD\nlet a = 1\n=======\nlet a = 2\n>>>>>>> b\n"])
+        let w = FileProbes.walk(repo, soft: 250, hard: 400, ansible: false)
+        #expect(w.conflicts.contains("Sources/A.swift"))
+    }
+}

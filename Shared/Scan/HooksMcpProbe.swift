@@ -58,7 +58,7 @@ enum HooksMcpProbe {
                 let t = $0.trimmingCharacters(in: .whitespaces)
                 return !t.isEmpty && !t.hasPrefix("#") && !t.hasPrefix("echo") && t != "exit 0" && !t.hasPrefix("set ")
             }
-            if meaningful.count <= 1 { return .nothing }   // stub
+            if meaningful.isEmpty { return .nothing }   // stub: nothing but boilerplate/exit 0
         }
         return .active
     }
@@ -115,10 +115,30 @@ enum HooksMcpProbe {
                 target = ([cmd, args].filter { !$0.isEmpty }).joined(separator: " ")
                 if let t = cfg["type"] as? String { transport = t }
             }
-            let broad = target.contains(" / ") || target.hasSuffix(" /") || target.contains("server-filesystem /")
             out.append(McpServer(name: name, transport: transport, target: target,
-                                 status: .connected, tools: [], broad: broad))
+                                 status: .configured, tools: [], broad: isBroadScope(target, abs: abs)))
         }
         return out.sorted { $0.name < $1.name }
+    }
+
+    /// A filesystem MCP is "broad" only if it grants access to root, the home dir, or
+    /// a path OUTSIDE the repo. A server correctly scoped to the repo (or a subdir)
+    /// is NOT broad — the old `contains("server-filesystem /")` test flagged every
+    /// absolute path, so a properly-scoped `… /Users/me/proj` cried wolf.
+    private static func isBroadScope(_ target: String, abs: String) -> Bool {
+        let fsServer = target.contains("filesystem")
+        let toks = target.split(whereSeparator: { $0 == " " }).map(String.init)
+        let home = NSHomeDirectory()
+        let pathArgs = toks.filter { $0.hasPrefix("/") || $0.hasPrefix("~") || $0.contains("$HOME") }
+        if !fsServer {
+            // Non-filesystem server: only a bare-root grant reads as broad.
+            return pathArgs.contains { $0 == "/" }
+        }
+        for raw in pathArgs {
+            let p = (raw as NSString).expandingTildeInPath.replacingOccurrences(of: "$HOME", with: home)
+            if p == "/" || p == home || p == home + "/" { return true }           // root / home
+            if p != abs && !p.hasPrefix(abs + "/") { return true }                  // reaches outside the repo
+        }
+        return false
     }
 }

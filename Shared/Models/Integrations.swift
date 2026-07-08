@@ -106,10 +106,13 @@ struct Hook: Identifiable, Sendable, Hashable {
 }
 
 enum McpStatus: String, Sendable, Hashable {
-    case connected, failed, unused, disabled
+    // `configured` = declared in .mcp.json but reachability NOT verified (we don't
+    // connect). It renders neutral, never a green "connected" we never measured.
+    case configured, connected, failed, unused, disabled
     var tone: VibeTone {
         switch self {
         case .connected: return .ok
+        case .configured: return .neutral
         case .failed: return .danger
         case .unused: return .warn
         case .disabled: return .neutral

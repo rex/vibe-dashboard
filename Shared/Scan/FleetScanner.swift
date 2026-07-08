@@ -88,28 +88,7 @@ struct FleetScanner: Sendable {
                 repos[i].children = kids
             }
         }
-        // Real skeleton drift: the newest stamped skeleton-version across the fleet
-        // is the "latest" everything else is measured against.
-        let latestSkeleton = SkeletonProbe.latest(repos.compactMap { $0.drift.version })
-        let byId = Dictionary(uniqueKeysWithValues: repos.map { ($0.id, $0) })
-        for i in repos.indices {
-            let signedReq = repos[i].signedRequired
-            if repos[i].kind == .workspace {
-                let children = repos[i].children.compactMap { byId[$0] }
-                let worst = children.map(\.health).max() ?? .ok
-                repos[i].health = worst
-                repos[i].compliance = children.isEmpty ? 100 : children.map(\.compliance).reduce(0, +) / children.count
-                repos[i].desc = "Workspace · \(children.count) managed repo\(children.count == 1 ? "" : "s")"
-                repos[i].stack = "workspace"
-                continue
-            }
-            repos[i].drift = SkeletonProbe.drift(version: repos[i].drift.version, latest: latestSkeleton)
-            repos[i].gates = Derive.gates(repos[i])
-            repos[i].compliance = Derive.compliance(repos[i], signedRequired: signedReq)
-            repos[i].health = Derive.health(repos[i], signedRequired: signedReq)
-            repos[i].surprises = Derive.surprises(repos[i], signedRequired: signedReq, hardLimit: 400)
-            repos[i].checked = "just now"
-        }
+        FleetScanner.grade(&repos)
 
         // Scanner + activity + assembly.
         let elapsedMs = String(format: "%.1f ms", Date().timeIntervalSince(start) * 1000)
@@ -130,6 +109,44 @@ struct FleetScanner: Sendable {
         return Fleet.assemble(scanner: scanner, appBuild: appBuild, repos: repos,
                               activity: activity, autopilot: Reference.defaultAutopilot(repoCount: leaves.count),
                               catalog: Reference.skillCatalog)
+    }
+
+    /// Derive gates/compliance/health/surprises for every repo, in TWO passes so
+    /// workspace rollups read freshly-graded children (a single pass rolled up a
+    /// stale pre-grade snapshot, so every workspace always showed ok/100 regardless
+    /// of how broken its children were — hiding the exact surprises this app exists for).
+    private static func grade(_ repos: inout [Repo]) {
+        let latestSkeleton = SkeletonProbe.latest(repos.compactMap { $0.drift.version })
+
+        // PASS 1 — grade every leaf repo.
+        for i in repos.indices where repos[i].kind != .workspace {
+            let signedReq = repos[i].signedRequired
+            repos[i].drift = SkeletonProbe.drift(version: repos[i].drift.version, latest: latestSkeleton)
+            repos[i].gates = Derive.gates(repos[i])
+            repos[i].compliance = Derive.compliance(repos[i], signedRequired: signedReq)
+            repos[i].health = Derive.health(repos[i], signedRequired: signedReq)
+            repos[i].surprises = Derive.surprises(repos[i], signedRequired: signedReq, hardLimit: 400)
+            repos[i].checked = "just now"
+        }
+
+        // PASS 2 — roll workspaces up from LIVE (already-graded) children, deepest
+        // first so a nested workspace is rolled up before its parent reads it.
+        var idxById: [String: Int] = [:]
+        for i in repos.indices { idxById[repos[i].id] = i }
+        func depth(_ id: String) -> Int {
+            var d = 0, cur: Int? = idxById[id]
+            while let i = cur, let p = repos[i].parentId, let pi = idxById[p], d < 64 { d += 1; cur = pi }
+            return d
+        }
+        for i in repos.indices.filter({ repos[$0].kind == .workspace })
+            .sorted(by: { depth(repos[$0].id) > depth(repos[$1].id) }) {
+            let kids = repos[i].children.compactMap { idxById[$0] }
+            repos[i].health = kids.map { repos[$0].health }.max() ?? .ok
+            repos[i].compliance = kids.isEmpty ? 100 : kids.reduce(0) { $0 + repos[$1].compliance } / kids.count
+            repos[i].desc = "Workspace · \(kids.count) managed repo\(kids.count == 1 ? "" : "s")"
+            repos[i].stack = "workspace"
+            repos[i].checked = "just now"
+        }
     }
 
     // ---- discovery ----

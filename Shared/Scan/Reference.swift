@@ -53,6 +53,15 @@ enum Reference {
         "rb", "c", "cc", "cpp", "h", "m", "mm", "sh",
     ]
     static let ansibleExtensions: Set<String> = ["yml", "yaml"]
+
+    // Text files scanned for merge-conflict markers (NOT the line census). A merge
+    // abandoned in package.json / Cargo.toml / a lockfile / README is just as much a
+    // "green build is lying" as one in code — restricting the scan to source files
+    // missed exactly the config/doc files most likely to be left mid-conflict.
+    static let conflictScanExtensions: Set<String> = [
+        "md", "markdown", "json", "yml", "yaml", "toml", "txt", "xml", "html", "css",
+        "scss", "lock", "cfg", "ini", "conf", "env", "gradle", "properties", "sql",
+    ]
 }
 
 /// Relative-time formatting ("3s ago" … "5 weeks ago").

@@ -33,17 +33,23 @@ enum GitProbe {
         f.worktree.unstaged = dirtyLines.count
         f.worktree.clean = dirtyLines.isEmpty
 
-        // Unpushed (ahead of upstream).
+        // Unpushed (ahead of upstream). When the branch has no upstream configured,
+        // `@{u}..HEAD` fails and `line` returns nil — that used to silently leave
+        // unpushed = 0, so a branch with a dozen never-pushed commits graded "in sync".
+        // Fall back to "commits not on ANY remote" (the same proxy the worktree
+        // classifier uses) so the headline never-pushed signal still fires.
         if let n = await line(["rev-list", "--count", "@{u}..HEAD"], abs), let c = Int(n) {
+            f.worktree.unpushed = c
+        } else if let n = await line(["rev-list", "--count", "HEAD", "--not", "--remotes"], abs), let c = Int(n) {
             f.worktree.unpushed = c
         }
 
-        // Signature of the last commit.
+        // Signature of the last commit. If there's no commit yet (or `log` fails) we
+        // simply don't know — leave `signed` at its default (true) rather than
+        // inferring from `commit.gpgsign` config, which grades intent, not fact, and
+        // wrongly flags a 0-commit repo as having "unsigned commits".
         if let g = await line(["log", "-1", "--format=%G?"], abs) {
             f.worktree.signed = ["G", "U", "X", "Y", "R", "E"].contains(g)
-        } else {
-            let cfg = await line(["config", "--get", "commit.gpgsign"], abs)
-            f.worktree.signed = (cfg == "true")
         }
 
         f.remotes = await remotes(abs, unpushed: f.worktree.unpushed)
@@ -108,8 +114,11 @@ enum GitProbe {
         // Commits that exist only on this branch (not on any remote) — a proxy for unlanded work.
         let commits = Int((await line(["rev-list", "--count", "HEAD", "--not", "--remotes"], path)) ?? "0") ?? 0
         let days = age / 86_400
-        let state: WorktreeLife = (days < 2 && commits > 0) ? .active
-            : (commits == 0 && days > 14) ? .abandoned
+        // Lifecycle is AGE-based ("created and forgotten"). The old logic gated
+        // "abandoned" on `commits == 0`, so a worktree sitting on unpushed commits for
+        // months could NEVER be abandoned — inverting the very case worth pruning.
+        let state: WorktreeLife = days < 7 ? .active
+            : days > 30 ? .abandoned
             : .stale
         return Worktree(branch: branch, created: lastRel, lastCommit: lastRel, commits: commits, state: state)
     }

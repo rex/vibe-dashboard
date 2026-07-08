@@ -117,7 +117,8 @@ enum Derive {
         f.append(contentsOf: hygieneFindings(r, signedRequired: signedRequired))
         // drift
         if let behind = r.drift.behind {
-            add(.med, "Drift", "skeleton \(behind) behind", "\(r.drift.files) skeleton-owned files drifted.", "reconcile")
+            add(.med, "Drift", "skeleton \(behind) behind",
+                "Stamped \(r.drift.version ?? "—") vs fleet-latest \(r.drift.latest ?? "—"). Reconcile with the skeleton.", "reconcile")
         }
         // docs — only HARD-limit bloat is a problem; soft is in policy.
         if r.docs.taskState.status == .fail {

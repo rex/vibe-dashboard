@@ -18,7 +18,7 @@ enum HygieneProbe {
         let secretSpecs = [":(glob)**/.env", ":(glob).env", ":(glob)**/.env.*", ":(glob).env.*",
                            ":(glob)**/*.pem", ":(glob)**/id_rsa", ":(glob)**/id_dsa",
                            ":(glob)**/*.p12", ":(glob)**/*.pfx", ":(glob)**/*.keystore", ":(glob)**/*.jks"]
-        h.secretFiles = (await tracked(abs, secretSpecs)).filter { !isEnvExample($0) }
+        h.secretFiles = (await tracked(abs, secretSpecs)).filter { !isSafeExampleEnv($0) }
 
         // Dependency / build output committed to git — never belongs in a repo.
         let junkSpecs = [":(glob)**/node_modules/**", ":(glob)**/DerivedData/**", ":(glob)**/.venv/**",
@@ -38,10 +38,13 @@ enum HygieneProbe {
         return r.stdout.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
 
-    /// `.env.example` / `.env.sample` / `.env.template` / `.env.dist` are safe to commit.
-    private static func isEnvExample(_ path: String) -> Bool {
+    /// Only `.env` VARIANTS named example/sample/template/dist are safe to commit.
+    /// This exclusion must NOT apply to key material (*.pem, id_rsa, *.p12, keystores) —
+    /// a private key is never an "example", so those are always flagged.
+    private static func isSafeExampleEnv(_ path: String) -> Bool {
         let name = (path as NSString).lastPathComponent.lowercased()
-        return ["example", "sample", "template", "dist", "md"].contains { name.hasSuffix($0) }
+        guard name == ".env" || name.hasPrefix(".env.") || name.hasSuffix(".env") else { return false }
+        return ["example", "sample", "template", "dist"].contains { name.hasSuffix($0) }
     }
 
     /// "node_modules/foo/bar.js" → "node_modules" (report the offending dir, not every file).
