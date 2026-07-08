@@ -43,8 +43,21 @@ struct VibeCommands: Commands {
     }
     private func openEditor(_ r: Repo?) {
         guard let r else { return }
-        let p = (r.absolutePath as NSString).expandingTildeInPath
-        NSWorkspace.shared.open(URL(fileURLWithPath: p))
+        let dir = URL(fileURLWithPath: (r.absolutePath as NSString).expandingTildeInPath,
+                      isDirectory: true)
+        let installed: (EditorApp) -> Bool = {
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleId) != nil
+        }
+        guard let editor = EditorApp.pick(from: EditorApp.priority, installed: installed),
+              let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: editor.bundleId)
+        else {
+            // No known editor installed — degrade to the OS default (Finder)
+            // rather than pretending an editor opened.
+            NSWorkspace.shared.open(dir)
+            return
+        }
+        NSWorkspace.shared.open([dir], withApplicationAt: appURL,
+                                configuration: NSWorkspace.OpenConfiguration())
     }
     private func pickRoot() {
         let panel = NSOpenPanel()
@@ -56,6 +69,29 @@ struct VibeCommands: Commands {
             store.setRoots(panel.urls.map(\.path))
             Task { await store.rescan() }
         }
+    }
+}
+
+/// A code editor the "Open in editor" command can launch, in priority order.
+/// Installation is detected by bundle identifier via `NSWorkspace`; the
+/// *selection* (`pick`) is pure so it is unit-tested without the workspace.
+enum EditorApp: String, CaseIterable, Sendable {
+    case vscode, cursor, xcode
+
+    /// A general-purpose editor first, then Swift-native Xcode as the fallback.
+    static let priority: [EditorApp] = [.vscode, .cursor, .xcode]
+
+    var bundleId: String {
+        switch self {
+        case .vscode: return "com.microsoft.VSCode"
+        case .cursor: return "com.todesktop.230313mzl4w4u92"
+        case .xcode:  return "com.apple.dt.Xcode"
+        }
+    }
+
+    /// The first candidate the `installed` predicate accepts, or nil if none are.
+    static func pick(from candidates: [EditorApp], installed: (EditorApp) -> Bool) -> EditorApp? {
+        candidates.first(where: installed)
     }
 }
 

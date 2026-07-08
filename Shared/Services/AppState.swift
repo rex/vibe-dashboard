@@ -1,6 +1,9 @@
 // AppState.swift — navigation + panel + overlay UI state (the action bus).
 
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 enum AppView: String, Hashable, CaseIterable { case fleet, agents, findings, skills, autopilot, repo }
 enum ConsoleTab: String, Hashable, CaseIterable { case output, shell, activity }
@@ -94,14 +97,7 @@ final class AppState {
             let raw = (result.stdout + (result.stderr.isEmpty ? "" : "\n" + result.stderr))
             let lines: [(text: String, tone: VibeTone)] = raw
                 .split(separator: "\n", omittingEmptySubsequences: false).prefix(200)
-                .map { line in
-                    let s = String(line)
-                    let low = s.lowercased()
-                    let tone: VibeTone = low.contains("error") || low.contains("fail") || s.contains("✗") ? .danger
-                        : low.contains("warn") || s.contains("⚠") ? .warn
-                        : s.contains("✓") || low.contains("passed") || low.contains("green") ? .ok : .neutral
-                    return (s, tone)
-                }
+                .map { (String($0), Self.lineTone(String($0))) }
             dismissToast(pending)
             shellLog.append(ShellEntry(repoName: repo.name, host: host, cwd: repo.path,
                                        cmd: "make \(target)", lines: Array(lines), ok: result.ok))
@@ -111,22 +107,154 @@ final class AppState {
         }
     }
 
-    /// Route a finding's fix-it to the matching action.
+    /// Classify a shell-output line's tone for the console. Pure — shared by
+    /// `runTarget` and the real git-write runners below.
+    nonisolated static func lineTone(_ s: String) -> VibeTone {
+        let low = s.lowercased()
+        if low.contains("error") || low.contains("fail") || s.contains("✗") { return .danger }
+        if low.contains("warn") || s.contains("⚠") { return .warn }
+        if s.contains("✓") || low.contains("passed") || low.contains("green") { return .ok }
+        return .neutral
+    }
+
+    /// Run a sequence of git subcommands in `repo`, streaming ONE shell entry and
+    /// returning whether EVERY step exited 0. Reuses the ProcessRunner/shellLog path
+    /// `runTarget` uses. The success toast fires ONLY on an all-zero run; a non-zero
+    /// step STOPS the sequence and surfaces the REAL stderr — never a fabricated "done".
+    @discardableResult
+    func runGit(_ repo: Repo, host: String, steps: [(label: String, args: [String])],
+                okTitle: String, okDetail: String) async -> Bool {
+        openConsole(.shell)
+        let abs = (repo.absolutePath as NSString).expandingTildeInPath
+        let git = ProcessRunner.gitPath
+        let pending = toast(okTitle, "\(repo.name) · running…", .info)
+        var lines: [(text: String, tone: VibeTone)] = []
+        var ok = true
+        var failErr = ""
+        for step in steps {
+            lines.append(("$ git " + step.args.joined(separator: " "), .neutral))
+            let r = await ProcessRunner.run(git, step.args, cwd: abs, timeout: 120)
+            let body = r.stdout + (r.stderr.isEmpty ? "" : (r.stdout.isEmpty ? "" : "\n") + r.stderr)
+            for ln in body.split(separator: "\n", omittingEmptySubsequences: false).prefix(120) where !ln.isEmpty {
+                lines.append((String(ln), Self.lineTone(String(ln))))
+            }
+            if !r.ok {
+                ok = false
+                failErr = (r.stderr.isEmpty ? r.stdout : r.stderr).trimmingCharacters(in: .whitespacesAndNewlines)
+                lines.append(("✗ git \(step.label) exited \(r.code)", .danger))
+                break
+            }
+        }
+        dismissToast(pending)
+        let cmd = "git " + steps.map { $0.label }.joined(separator: " · ")
+        shellLog.append(ShellEntry(repoName: repo.name, host: host, cwd: repo.path, cmd: cmd, lines: lines, ok: ok))
+        if shellLog.count > 12 { shellLog.removeFirst(shellLog.count - 12) }
+        if ok {
+            toast(okTitle, okDetail, .ok)
+        } else {
+            let first = failErr.split(separator: "\n").first.map(String.init) ?? "exit non-zero"
+            toast(okTitle + " · failed", String(first.prefix(140)), .danger)
+        }
+        return ok
+    }
+
+    /// Remove each ABANDONED worktree with `git worktree remove` (NO `--force`). The
+    /// on-disk path is resolved LIVE from `git worktree list` (the Worktree model
+    /// carries no path). The guard refuses stale/active/unpushed worktrees; git
+    /// itself refuses a dirty one and that non-zero surfaces honestly — never a
+    /// fabricated "pruned". Returns true only if something was actually removed and
+    /// nothing failed (so the caller knows whether a rescan is warranted).
+    @discardableResult
+    func pruneWorktrees(_ repo: Repo, worktrees: [Worktree], host: String) async -> Bool {
+        openConsole(.shell)
+        let abs = (repo.absolutePath as NSString).expandingTildeInPath
+        let git = ProcessRunner.gitPath
+        let listing = await ProcessRunner.run(git, ["worktree", "list", "--porcelain"], cwd: abs, timeout: 30)
+        let pathByBranch = Dictionary(GitProbe.parseWorktrees(listing.stdout, repoAbs: abs).map { ($0.branch, $0.path) },
+                                      uniquingKeysWith: { first, _ in first })
+        let pending = toast("prune worktrees", "\(repo.name) · running…", .info)
+        var lines: [(text: String, tone: VibeTone)] = []
+        var removed = 0, failed = 0, refused = 0
+        var failErr = ""
+        for wt in worktrees {
+            switch GitWrite.pruneDecision(state: wt.state, unpushedCommits: wt.commits) {
+            case .refuse(let why):
+                refused += 1
+                lines.append(("⚠ \(wt.branch): \(why)", .warn))
+            case .remove:
+                guard let path = pathByBranch[wt.branch] else {
+                    refused += 1
+                    lines.append(("⚠ \(wt.branch): worktree not found — already removed?", .warn))
+                    continue
+                }
+                let args = GitWrite.worktreeRemoveArgs(path: path)
+                lines.append(("$ git " + args.joined(separator: " "), .neutral))
+                let r = await ProcessRunner.run(git, args, cwd: abs, timeout: 60)
+                if r.ok {
+                    removed += 1
+                    lines.append(("✓ removed \(wt.branch)", .ok))
+                } else {
+                    failed += 1
+                    failErr = (r.stderr.isEmpty ? r.stdout : r.stderr).trimmingCharacters(in: .whitespacesAndNewlines)
+                    for ln in failErr.split(separator: "\n").prefix(6) { lines.append((String(ln), .danger)) }
+                }
+            }
+        }
+        dismissToast(pending)
+        shellLog.append(ShellEntry(repoName: repo.name, host: host, cwd: repo.path,
+                                   cmd: "git worktree remove × \(worktrees.count)", lines: lines, ok: failed == 0))
+        if shellLog.count > 12 { shellLog.removeFirst(shellLog.count - 12) }
+        if failed > 0 {
+            let first = failErr.split(separator: "\n").first.map(String.init) ?? "git worktree remove failed"
+            toast("prune failed", String(first.prefix(140)), .danger)
+        } else if removed > 0 {
+            toast("pruned \(removed) worktree\(removed == 1 ? "" : "s")",
+                  refused > 0 ? "\(refused) kept — not safe to remove" : "git worktree remove · disk reclaimed", .ok)
+        } else {
+            toast("nothing pruned",
+                  refused > 0 ? "\(refused) worktree\(refused == 1 ? "" : "s") kept — not safe to remove" : "no matching worktrees", .warn)
+        }
+        return failed == 0 && removed > 0
+    }
+
+    /// Reveal a path in Finder — a REAL action for places the app can only observe,
+    /// not act (an agent process can't be paused, so we surface where it works).
+    func reveal(path: String) {
+        let p = (path as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: p) else {
+            toast("couldn't reveal", "path not found on disk", .neutral); return
+        }
+        #if canImport(AppKit)
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)])
+        #endif
+    }
+
+    /// Reveal the repo a finding belongs to (the "open file" fix). Resolves the path
+    /// live from the store — replaces a faked "opened <x>" toast for a no-op.
+    private func revealFinding(_ f: Finding) {
+        guard let id = f.repoId, let abs = FleetStore.current?.fleet.repo(id)?.absolutePath else {
+            toast("couldn't reveal", "no path for this finding", .neutral); return
+        }
+        reveal(path: abs)
+    }
+
+    /// Route a finding's fix-it to the matching action. Points sheets at the
+    /// finding's repo by setting `selectedId` — WITHOUT force-navigating into repo
+    /// detail. Verbs with no real in-app action say so honestly (neutral tone)
+    /// instead of emitting a success toast for work that never happened.
     func runFix(_ f: Finding) {
-        if let rid = f.repoId { selectedId = rid }
+        if let rid = f.repoId, !rid.isEmpty { selectedId = rid }
         switch f.fix {
-        case "reconcile": openRepo(f.repoId ?? selectedId ?? ""); openSheet(.reconcile)
-        case "commit…", "sign + push": if let r = f.repoId { openRepo(r) }; openSheet(.commit)
-        case "prune": if let r = f.repoId { openRepo(r) }; openSheet(.prune)
+        case "reconcile": openSheet(.reconcile)
+        case "commit…", "sign + push": openSheet(.commit)
+        case "prune": openSheet(.prune)
         case "apply skill": openSheet(.applySkill)
-        case "install hooks": if let r = f.repoId { openRepo(r) }; openSheet(.installHooks)
-        case "open console", "re-run", "open tests": if let r = f.repoId { openRepo(r) }; openConsole(.output); toast("console", f.what, .info)
-        case "split file": toast("god-file surgery", "opening with suggested split points…", .info)
-        case "init serena": toast("serena init", "indexing symbols…", .info)
-        case "scope server": toast("mcp · scoped", "\(f.what) narrowed to the repo root", .ok)
-        case "reconnect": toast("mcp · reconnect", "refreshing capability token…", .info)
-        case "open file": if let r = f.repoId { openRepo(r) }; toast("editor", "opened \(f.what)", .ok)
-        default: if let r = f.repoId { openRepo(r) }
+        case "install hooks": openSheet(.installHooks)
+        case "open console", "re-run", "open tests": openConsole(.output); toast("console", f.what, .info)
+        case "open file": revealFinding(f)
+        case "split file", "init serena", "scope server", "reconnect":
+            toast("not yet wired", "\(f.fix ?? "this action") has no in-app action yet", .neutral)
+        default: break
         }
     }
 }

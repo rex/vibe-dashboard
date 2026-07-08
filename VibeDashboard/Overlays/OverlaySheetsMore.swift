@@ -42,65 +42,51 @@ struct ApplySkillSheet: View {
 
 struct InstallHooksSheet: View {
     @Environment(AppState.self) private var app
+    @Environment(FleetStore.self) private var store
     let repo: Repo
+    /// The repo's current `core.hooksPath`, read live at open. nil = loading;
+    /// "" = unset (hooks don't run); otherwise the configured value.
+    @State private var hooksPath: String? = nil
 
-    private struct Ref { let event: String; let matcher: String?; let file: String; let role: String }
-    private let refs: [Ref] = [
-        Ref(event: "SessionStart", matcher: nil, file: ".claude/hooks/session-start.sh", role: "load VIBE.yaml + repo rules into context"),
-        Ref(event: "PreToolUse", matcher: "Bash", file: ".claude/hooks/bash-guard.sh", role: "block dangerous shell + writes outside scope"),
-        Ref(event: "PostToolUse", matcher: "Edit|Write", file: ".claude/hooks/format-edit.sh", role: "format every file the agent writes"),
-        Ref(event: "Stop", matcher: nil, file: ".claude/hooks/stop-gate.sh", role: "run make validate — block finish while red"),
-    ]
-
-    private func active(_ r: Ref) -> Bool {
-        repo.hooks.contains { $0.src == "claude" && $0.event == r.event && $0.status == .active }
-    }
-    private var needed: Int { refs.filter { !active($0) }.count }
+    private var alreadyArmed: Bool { hooksPath == ".githooks" }
 
     var body: some View {
-        let n = max(needed, 1)
-        return SheetShell(title: "Install skeleton hooks · \(repo.name)", icon: "shield-plus",
-                          width: OverlayLayout.sheetW, confirm: "Install \(n)", confirmIcon: "shield-plus") {
-            app.closeSheet()
-            app.toast("installed skeleton hooks",
-                      "\(n) guardrail\(n > 1 ? "s" : "") written to .claude/hooks/ · settings.json wired", .ok)
-        } content: {
+        SheetShell(title: "Install git hooks · \(repo.name)", icon: "shield-plus",
+                   width: OverlayLayout.sheetW, confirm: alreadyArmed ? "Re-point" : "Set hooks path",
+                   confirmIcon: "shield-plus", onConfirm: perform) {
             VStack(alignment: .leading, spacing: Theme.space.x3) {
-                if needed > 0 {
-                    SheetProse(text: "this repo is missing \(needed) of the skeleton's guardrail hooks. they'll be copied into .claude/hooks/ and wired into .claude/settings.json. your existing hooks are kept.")
-                } else {
-                    SheetProse(text: "this repo already has every skeleton guardrail. re-installing restores each script to the current skeleton version.")
+                SheetProse(text: "points git at the repo's .githooks/ via core.hooksPath — the skeleton's `make install-hooks` step. Every commit then runs the repo's pre-commit gate. Nothing else on disk is touched.")
+                FileCard(caption: "will run") {
+                    FileRow(icon: "terminal", path: "git config core.hooksPath .githooks", tone: .ok) { EmptyView() }
                 }
-                FileCard(caption: "guardrail hooks") {
-                    ForEach(refs.indices, id: \.self) { i in
-                        hookRow(refs[i])
+                FileCard(caption: "current core.hooksPath") {
+                    FileRow(icon: alreadyArmed ? "check" : "git-branch",
+                            path: hooksPath == nil ? "reading…"
+                                : (hooksPath!.isEmpty ? "(unset — hooks don't run)" : hooksPath!),
+                            tone: alreadyArmed ? .ok : (hooksPath?.isEmpty == false ? .warn : .neutral)) {
+                        if alreadyArmed {
+                            Text("armed").font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.ok)
+                        }
                     }
                 }
             }
         }
+        .task {
+            let abs = (repo.absolutePath as NSString).expandingTildeInPath
+            let r = await ProcessRunner.git(["config", "--get", "core.hooksPath"], cwd: abs)
+            hooksPath = r.ok ? r.stdout.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        }
     }
 
-    @ViewBuilder private func hookRow(_ r: Ref) -> some View {
-        let on = active(r)
-        HStack(alignment: .top, spacing: 11) {
-            VibeIcon(on ? "check" : "file-plus", size: 14, color: on ? Theme.color.ok : Theme.color.accent)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(r.event + (r.matcher.map { " · \($0)" } ?? ""))
-                    .font(VibeFont.mono(VibeFont.size.sm))
-                    .foregroundStyle(Theme.color.textPrimary)
-                Text("\(r.file) — \(r.role)")
-                    .font(VibeFont.sans(VibeFont.size.xxs))
-                    .foregroundStyle(Theme.color.textMuted)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: Theme.space.x2)
-            Text(on ? "present" : "install")
-                .font(VibeFont.mono(VibeFont.size.xxs))
-                .foregroundStyle(on ? Theme.color.ok : Theme.color.accent)
+    private func perform() {
+        app.closeSheet()
+        let r = repo, host = store.fleet.scanner.host
+        Task { @MainActor in
+            let ok = await app.runGit(r, host: host, steps: [("config", GitWrite.hooksPathArgs)],
+                                      okTitle: "hooks path set",
+                                      okDetail: "core.hooksPath = .githooks · pre-commit gate armed")
+            if ok { await store.rescan(repoId: r.id) }
         }
-        .padding(.horizontal, 11).padding(.vertical, 9)
-        .opacity(on ? 0.5 : 1)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.color.borderSubtle).frame(height: 1) }
     }
 }
 

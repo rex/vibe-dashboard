@@ -27,10 +27,10 @@ struct ToolbarView: View {
             Wordmark(size: 22)
             Rectangle().fill(Theme.color.border).frame(width: 1, height: 20)
 
-            HStack(spacing: 2) {
-                toolIcon("chevron-left", enabled: inRepo) { app.back() }
-                toolIcon("chevron-right", enabled: false) {}
-            }
+            // Back navigates repo → previous view. There is no forward history,
+            // so no forward chevron is shown (a permanently-disabled control
+            // advertises a capability the app doesn't have).
+            toolIcon("chevron-left", enabled: inRepo) { app.back() }
 
             if inRepo, let r = repo {
                 VStack(alignment: .leading, spacing: 0) {

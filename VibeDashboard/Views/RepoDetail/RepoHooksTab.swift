@@ -33,7 +33,11 @@ struct RepoHooksTab: View {
 
                 hooksSection
                 mcpSection
-                if let serves = repo.serves { servedPanel(serves) }
+                if let serves = repo.serves {
+                    servedPanel(serves)   // real data path (kept for when detection lands)
+                } else {
+                    servedPreview         // honest disclosure while detection is deferred
+                }
             }
             .padding(Theme.space.x5)
         }
@@ -88,6 +92,24 @@ struct RepoHooksTab: View {
     }
 
     // ---- served side ----
+    //
+    // Served-side detection (does THIS repo expose an MCP capability, and who
+    // consumes it?) is not wired into the scanner yet, so `repo.serves` is
+    // always nil today. Rather than silently omit the section, disclose it as a
+    // preview so the deferred capability is visible — never fabricate data.
+
+    private var servedPreview: some View {
+        VibePanel(title: "served side", icon: "server") {
+            VStack(alignment: .leading, spacing: Theme.space.x2_5) {
+                Pill(text: "preview · not yet wired", tone: .neutral, icon: "circle-dot-dashed")
+                Text("served-side MCP detection isn't wired into the scanner yet. once it lands, this repo's exposed tools, guarded surface, and downstream consumers will appear here.")
+                    .font(VibeFont.mono(VibeFont.size.sm))
+                    .foregroundStyle(Theme.color.textMuted)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
 
     @ViewBuilder private func servedPanel(_ serves: ServesInfo) -> some View {
         VibePanel(title: "served side", icon: "server") {

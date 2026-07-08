@@ -17,6 +17,9 @@ struct AutopilotView: View {
     @Environment(AppState.self) private var app
     @Environment(FleetStore.self) private var store
 
+    // Persisted view-local (UserDefaults) so an armed choice survives a re-scan.
+    // This is the arm *toggle* only — no rule executes (see previewBanner).
+    @AppStorage("vibe.autopilot.armed") private var armedStore: String = ""
     @State private var armed: [String: Bool] = [:]
 
     private var rules: [AutopilotRule] { store.fleet.autopilot }
@@ -27,6 +30,7 @@ struct AutopilotView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.space.x4) {
                 header
+                previewBanner
                 rulesCard
                 logCard
             }
@@ -36,22 +40,41 @@ struct AutopilotView: View {
         .onAppear { seed() }
     }
 
-    /// Seed local armed state from each rule's `.armed` (only if unseeded).
+    /// Seed local armed state (only if unseeded): a persisted choice wins, and
+    /// any rule not yet in the store falls back to its shipped `.armed` default.
     private func seed() {
         guard armed.isEmpty, !rules.isEmpty else { return }
-        armed = Dictionary(uniqueKeysWithValues: rules.map { ($0.ruleId, $0.armed) })
+        var loaded = Self.decode(armedStore)
+        for r in rules where loaded[r.ruleId] == nil { loaded[r.ruleId] = r.armed }
+        armed = loaded
     }
 
     private func toggle(_ rule: AutopilotRule) {
         let next = !(armed[rule.ruleId] ?? rule.armed)
         armed[rule.ruleId] = next
-        if next && rule.danger {
-            app.toast("armed", rule.label + " — will act unattended", .warn)
-        } else if next {
-            app.toast("armed", rule.label + " · running automatically · " + rule.scope, .ok)
+        persist()
+        // HONEST: arming only saves the toggle. No rule executes yet, so the
+        // toast must not claim anything ran "automatically" / "unattended".
+        if next {
+            app.toast("armed (preview)", rule.label + " — saved; autopilot rules don't run yet", .info)
         } else {
-            app.toast("disarmed", rule.label + " · back to confirm-first", .info)
+            app.toast("disarmed", rule.label, .info)
         }
+    }
+
+    /// Persist the arm map to view-local UserDefaults (survives a re-scan).
+    private func persist() {
+        if let data = try? JSONEncoder().encode(armed),
+           let string = String(data: data, encoding: .utf8) {
+            armedStore = string
+        }
+    }
+
+    private static func decode(_ string: String) -> [String: Bool] {
+        guard let data = string.data(using: .utf8),
+              let map = try? JSONDecoder().decode([String: Bool].self, from: data)
+        else { return [:] }
+        return map
     }
 
     // MARK: header
@@ -66,7 +89,7 @@ struct AutopilotView: View {
                 (Text("read-only watches and chores you trust enough to let run unattended. ")
                     .foregroundStyle(Theme.color.textSecondary)
                  + Text("destructive").foregroundStyle(Theme.color.danger)
-                 + Text(" rules start disarmed — arm one and it acts on disk without asking.")
+                 + Text(" rules ship disarmed — once autopilot executes, arming one will let it act on disk without asking.")
                     .foregroundStyle(Theme.color.textSecondary))
                     .font(VibeFont.mono(VibeFont.size.sm))
                     .lineSpacing(3)
@@ -77,6 +100,31 @@ struct AutopilotView: View {
             Pill(text: "\(armedCount) of \(rules.count) armed",
                  tone: armedCount > 0 ? .ok : .neutral, icon: "zap")
         }
+    }
+
+    // MARK: preview banner
+
+    /// The honest disclosure: the arm toggles are real and persist, but no rule
+    /// engine runs them yet. Prevents a "red-dot-means-something" reading of an
+    /// armed rule.
+    private var previewBanner: some View {
+        HStack(alignment: .top, spacing: Theme.space.x2_5) {
+            VibeIcon("triangle-alert", size: 15, color: Theme.color.warn)
+            (Text("Preview — ")
+                .font(VibeFont.mono(VibeFont.size.sm, .bold)).foregroundStyle(Theme.color.warn)
+             + Text("armed rules don't execute yet. Arming saves the toggle so your choice survives a re-scan, but nothing runs on disk.")
+                .font(VibeFont.mono(VibeFont.size.sm)).foregroundStyle(Theme.color.textSecondary))
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.space.x4)
+        .padding(.vertical, Theme.space.x3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.color.warnSurface)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.radius.md, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius.md, style: .continuous)
+            .strokeBorder(Theme.color.warnLine, lineWidth: 1))
     }
 
     // MARK: rules

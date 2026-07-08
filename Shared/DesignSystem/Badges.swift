@@ -59,7 +59,6 @@ struct StatusBadge: View {
             if showDot {
                 Circle().fill(dotColor)
                     .frame(width: small ? 6 : 7, height: small ? 6 : 7)
-                    .modifier(PulseModifier(active: live))
                     .shadow(color: live ? ColorPalette.lime400.opacity(0.5) : .clear, radius: live ? 4 : 0)
             }
             Text(text).tracking(0.02 * fontSize)
@@ -145,8 +144,11 @@ struct GradeChip: View {
     }
 }
 
-/// Live-dot emphasis. Static by design — a continuous per-dot pulse across
-/// dozens of rows pegs the main thread, so we keep the glow but not the loop.
+/// Deprecated no-op. The live/danger signal is carried by the dot's glow, not a
+/// pulse loop (a continuous per-dot animation across dozens of rows pegs the
+/// main thread). The `StatusBadge` call site is gone; this type survives only
+/// because `HealthDot` (Shared/DesignSystem/Parts.swift) still references it.
+/// Delete this type and that call site together to finish the removal.
 struct PulseModifier: ViewModifier {
     var active: Bool
     func body(content: Content) -> some View { content }

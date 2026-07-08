@@ -31,6 +31,9 @@ struct FleetView: View {
                         StatTile(value: "\(t.abandonedWorktrees)", label: "abandoned", tone: t.abandonedWorktrees > 0 ? .danger : .ok, icon: "git-branch") { app.goView(.agents) }
                         StatTile(value: "\(t.bloatedDocs)", label: "doc bloat", tone: t.bloatedDocs > 0 ? .danger : .ok, icon: "file-warning") { app.goView(.agents) }
                         StatTile(value: "\(t.surprises)", label: "surprises", tone: t.surprises > 0 ? .danger : .ok, icon: "triangle-alert") { app.goView(.findings) }
+                        StatTile(value: "\(t.godFiles)", label: "god files", tone: t.godFiles > 0 ? .danger : .ok, icon: "file-code-2")
+                        StatTile(value: "\(t.dirty)", label: "dirty trees", tone: t.dirty > 0 ? .warn : .ok, icon: "git-commit-horizontal")
+                        StatTile(value: "\(t.mcpFailed)", label: "mcp failed", tone: t.mcpFailed > 0 ? .danger : .ok, icon: "waypoints")
                     }
                     .background(Theme.color.border)
                 }

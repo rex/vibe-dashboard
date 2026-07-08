@@ -191,8 +191,9 @@ private struct SessionCard: View {
             VibeButton(title: "Watch", icon: "terminal", variant: .secondary, size: .sm, block: true) {
                 app.openRepo(repo.id); app.openConsole(.output)
             }
-            VibeButton(title: "Pause", icon: "pause", variant: .danger, size: .sm, block: true) {
-                app.toast("paused \(tool.label)", "\(repo.name) · held for review", .warn)
+            // Agents can't be paused (ps/lsof is read-only) — reveal the tree instead.
+            VibeButton(title: "Reveal", icon: "folder-open", variant: .secondary, size: .sm, block: true) {
+                app.reveal(path: repo.absolutePath)
             }
         }
     }
@@ -256,6 +257,7 @@ private struct SprawlRow: View {
     let wt: Worktree
     let last: Bool
     @Environment(AppState.self) private var app
+    @Environment(FleetStore.self) private var store
 
     var body: some View {
         HStack(alignment: .center, spacing: Theme.space.x2_5) {
@@ -275,9 +277,14 @@ private struct SprawlRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             StatusBadge(text: wt.state.badgeLabel, tone: wt.state.tone, small: true)
-            if wt.state != .active {
+            // Per-row prune is gated to ABANDONED only (a stale one may be unpushed).
+            if wt.state == .abandoned {
                 Button {
-                    app.toast("pruned", "git worktree remove \(wt.branch) · \(repo.name)", .ok)
+                    let r = repo, w = wt, host = store.fleet.scanner.host
+                    Task { @MainActor in
+                        let ok = await app.pruneWorktrees(r, worktrees: [w], host: host)
+                        if ok { await store.rescan(repoId: r.id) }
+                    }
                 } label: {
                     VibeIcon("trash-2", size: 12, color: Theme.color.textMuted)
                         .frame(width: 26, height: 26)

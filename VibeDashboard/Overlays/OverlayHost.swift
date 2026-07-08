@@ -15,6 +15,25 @@ enum OverlayLayout {
     static let topInset: CGFloat = 0.07     // fraction of window height
     static let listMax: CGFloat = 340
     static let bodyMax: CGFloat = 460
+    static let paletteCap = 9        // max palette rows shown; the rest are counted as "N more…"
+}
+
+/// Pure command-palette match: case-insensitive substring on label/sub, capped
+/// to `cap`. Returns the visible item indices and how many matches the cap hid.
+/// Extracted from the view so the filter/counting is unit-testable.
+enum PaletteMatch {
+    static func run(labels: [(label: String, sub: String?)], query: String, cap: Int)
+        -> (visible: [Int], hidden: Int) {
+        let q = query.lowercased()
+        let all: [Int] = q.isEmpty
+            ? Array(labels.indices)
+            : labels.indices.filter {
+                labels[$0].label.lowercased().contains(q)
+                    || (labels[$0].sub?.lowercased().contains(q) ?? false)
+            }
+        let shown = Array(all.prefix(max(0, cap)))
+        return (shown, all.count - shown.count)
+    }
 }
 
 struct OverlayHost: View {
@@ -85,6 +104,7 @@ private struct CommandPalette: View {
     @Environment(AppState.self) private var app
     @Environment(FleetStore.self) private var store
     @State private var query = ""
+    @State private var selection = 0
     @FocusState private var focused: Bool
 
     private var items: [PaletteItem] {
@@ -113,12 +133,24 @@ private struct CommandPalette: View {
         return repoItems + actions
     }
 
-    private var filtered: [PaletteItem] {
-        let q = query.lowercased()
-        let base = q.isEmpty ? items : items.filter {
-            $0.label.lowercased().contains(q) || ($0.sub?.lowercased().contains(q) ?? false)
-        }
-        return Array(base.prefix(9))
+    private var matchResult: (visible: [PaletteItem], hidden: Int) {
+        let all = items
+        let r = PaletteMatch.run(labels: all.map { (label: $0.label, sub: $0.sub) },
+                                 query: query, cap: OverlayLayout.paletteCap)
+        return (r.visible.map { all[$0] }, r.hidden)
+    }
+    private var filtered: [PaletteItem] { matchResult.visible }
+    private var hiddenCount: Int { matchResult.hidden }
+
+    private func move(_ delta: Int) {
+        let n = filtered.count
+        guard n > 0 else { return }
+        selection = min(max(0, selection + delta), n - 1)
+    }
+    private func runSelected() {
+        let rows = filtered
+        guard rows.indices.contains(selection) else { return }
+        rows[selection].run()
     }
 
     var body: some View {
@@ -130,6 +162,7 @@ private struct CommandPalette: View {
                     .font(VibeFont.mono(VibeFont.size.md))
                     .foregroundStyle(Theme.color.textBright)
                     .focused($focused)
+                    .onSubmit { runSelected() }   // Enter runs the highlighted row
                 Kbd("esc")
             }
             .padding(.horizontal, Theme.space.x4)
@@ -145,7 +178,10 @@ private struct CommandPalette: View {
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
-                        ForEach(filtered) { item in PaletteRow(item: item) }
+                        ForEach(Array(filtered.enumerated()), id: \.element.id) { idx, item in
+                            PaletteRow(item: item, selected: idx == selection) { selection = idx }
+                        }
+                        if hiddenCount > 0 { moreRow }
                     }
                     .padding(Theme.space.x1_5)
                 }
@@ -159,12 +195,37 @@ private struct CommandPalette: View {
             .strokeBorder(Theme.color.borderStrong, lineWidth: 1))
         .shadow(color: .black.opacity(0.55), radius: 20, y: 16)
         .onAppear { focused = true }
+        .onMoveCommand { direction in       // ↑/↓ move the highlight (works while the field is focused)
+            switch direction {
+            case .up: move(-1)
+            case .down: move(1)
+            default: break
+            }
+        }
+        .onExitCommand { app.closeSheet() }  // make the advertised `esc` real
+        .onChange(of: query) { selection = 0 }
+    }
+
+    /// "N more…" — the cap hid some matches; disclose the count so they're not
+    /// silently dropped.
+    private var moreRow: some View {
+        HStack(spacing: Theme.space.x2_5) {
+            VibeIcon("more-horizontal", size: 14, color: Theme.color.textGhost).frame(width: 14)
+            Text("\(hiddenCount) more — keep typing to narrow")
+                .font(VibeFont.mono(VibeFont.size.xxs))
+                .foregroundStyle(Theme.color.textFaint)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
     }
 }
 
 private struct PaletteRow: View {
     let item: PaletteItem
-    @State private var hover = false
+    var selected: Bool = false
+    var onHover: () -> Void = {}
     var body: some View {
         Button(action: item.run) {
             HStack(spacing: Theme.space.x2_5) {
@@ -193,11 +254,11 @@ private struct PaletteRow: View {
             .padding(.horizontal, 11)
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(hover ? Theme.color.surfaceActive : .clear)
+            .background(selected ? Theme.color.surfaceActive : .clear)
             .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { hover = $0 }
+        .onHover { if $0 { onHover() } }   // mouse hover drives the same selection as ↑/↓
     }
 }

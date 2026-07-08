@@ -240,6 +240,7 @@ struct FleetScanner: Sendable {
         r.census = census
         r.docs = docs
         r.coverageFloor = coverageFloor(vibe)
+        r.coverage = CoverageProbe.coverage(abs)   // real % from an on-disk artifact, else nil (honest absence)
         r.makefile = DeriveIntegrations.makefile(abs)
         r.scm = DeriveIntegrations.scm(branch: git.branch, remotes: git.remotes,
                                        worktree: git.worktree, signedRequired: signedRequired(vibe))

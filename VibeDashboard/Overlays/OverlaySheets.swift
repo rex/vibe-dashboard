@@ -16,6 +16,9 @@ struct SheetShell<Body: View>: View {
     var confirm: String
     var confirmIcon: String
     var confirmVariant: VibeButtonVariant = .primary
+    /// When true the primary confirm is blocked + dimmed (e.g. an empty commit
+    /// message, or nothing to commit) — the sheet can't fire a no-op write.
+    var confirmDisabled: Bool = false
     var onConfirm: () -> Void
     @ViewBuilder var content: () -> Body
 
@@ -49,6 +52,8 @@ struct SheetShell<Body: View>: View {
                 Spacer()
                 VibeButton(title: "Cancel", variant: .ghost) { app.closeSheet() }
                 VibeButton(title: confirm, icon: confirmIcon, variant: confirmVariant, action: onConfirm)
+                    .disabled(confirmDisabled)
+                    .opacity(confirmDisabled ? 0.45 : 1)
             }
             .padding(.horizontal, Theme.space.x4)
             .padding(.vertical, Theme.space.x3)
@@ -125,23 +130,22 @@ struct FileRow<Right: View>: View {
 
 struct CommitSheet: View {
     @Environment(AppState.self) private var app
+    @Environment(FleetStore.self) private var store
     let repo: Repo
     @State private var sign = true
     @State private var message = ""
+    /// The REAL changed paths, read live from `git status --porcelain` at open —
+    /// nil while loading. No fabricated `max(1, unstaged)` placeholder rows.
+    @State private var changed: [String]? = nil
 
-    private var branch: String { repo.agent?.branch ?? "main" }
-    private var count: Int { max(1, repo.worktree.unstaged) }
+    private var branch: String { repo.build.branch }
+    private var files: [String] { changed ?? [] }
+    private var canCommit: Bool { GitWrite.isCommittable(message) && !files.isEmpty }
 
     var body: some View {
         SheetShell(title: "Commit · \(repo.name)", icon: "git-commit-horizontal",
-                   width: OverlayLayout.sheetW, confirm: "Commit & push", confirmIcon: "git-commit-horizontal") {
-            app.closeSheet()
-            if sign {
-                app.toast("committed + pushed", "\(count) files → \(branch) · signed ✓", .ok)
-            } else {
-                app.toast("committed + pushed", "\(count) files → \(branch) · UNSIGNED", .warn)
-            }
-        } content: {
+                   width: OverlayLayout.sheetW, confirm: "Commit & push", confirmIcon: "git-commit-horizontal",
+                   confirmDisabled: !canCommit, onConfirm: perform) {
             VStack(alignment: .leading, spacing: Theme.space.x3) {
                 HStack(spacing: Theme.space.x2_5) {
                     VibeIcon("git-branch", size: 14, color: Theme.color.textMuted)
@@ -149,24 +153,65 @@ struct CommitSheet: View {
                     + Text(branch).font(VibeFont.mono(VibeFont.size.sm, .bold)).foregroundStyle(Theme.color.textPrimary)
                     if !repo.worktree.signed { Pill(text: "commits unsigned", tone: .danger) }
                 }
-                FileCard(caption: "staged · \(count)") {
-                    ForEach(0..<count, id: \.self) { i in
-                        FileRow(icon: "file-pen", path: repo.path + "/…", tone: .warn) {
-                            EmptyView()
-                        }.opacity(i == 0 ? 1 : 0.85)
-                    }
-                }
-                VibeTextField(placeholder: "commit message — one logical step…", text: $message)
+                changedCard
+                VibeTextField(placeholder: "commit message — one logical step…", text: $message, onSubmit: perform)
                 Button { sign.toggle() } label: {
                     HStack(spacing: Theme.space.x2_5) {
                         VibeSwitch(isOn: $sign)
                         Text("sign commit ").font(VibeFont.mono(VibeFont.size.sm)).foregroundStyle(Theme.color.textPrimary)
-                        + Text("· signed_commits_required is true")
+                        + Text(repo.signedRequired ? "· signed_commits_required is true" : "· uses -S (recommended)")
                             .font(VibeFont.mono(VibeFont.size.sm)).foregroundStyle(Theme.color.textMuted)
                     }
                     .contentShape(Rectangle())
                 }.buttonStyle(.plain)
             }
+        }
+        .task {
+            let abs = (repo.absolutePath as NSString).expandingTildeInPath
+            let r = await ProcessRunner.git(["status", "--porcelain"], cwd: abs)
+            changed = r.stdout
+                .split(separator: "\n", omittingEmptySubsequences: true)
+                .map { String($0.dropFirst(3)) }
+                .filter { !$0.isEmpty }
+        }
+    }
+
+    @ViewBuilder private var changedCard: some View {
+        if changed == nil {
+            FileCard(caption: "reading working tree…") {
+                FileRow(icon: "refresh-cw", path: "git status --porcelain", tone: .neutral) { EmptyView() }
+            }
+        } else if files.isEmpty {
+            FileCard(caption: "changed · 0") {
+                FileRow(icon: "check", path: "working tree clean — nothing to commit", tone: .ok) { EmptyView() }
+            }
+        } else {
+            FileCard(caption: "changed · \(files.count)") {
+                ForEach(files.prefix(40), id: \.self) { p in
+                    FileRow(icon: "file-pen", path: p, tone: .warn) { EmptyView() }
+                }
+                if files.count > 40 {
+                    FileRow(icon: "more-horizontal", path: "+ \(files.count - 40) more", tone: .neutral) { EmptyView() }
+                }
+            }
+        }
+    }
+
+    private func perform() {
+        let msg = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let paths = files
+        guard GitWrite.isCommittable(msg), !paths.isEmpty else { return }
+        app.closeSheet()
+        let r = repo, host = store.fleet.scanner.host, signed = sign, n = paths.count, br = branch
+        let steps: [(label: String, args: [String])] = [
+            ("add", GitWrite.addAllArgs),
+            ("commit", GitWrite.commitArgs(message: msg, sign: signed)),
+            ("push", GitWrite.pushArgs),
+        ]
+        Task { @MainActor in
+            let ok = await app.runGit(r, host: host, steps: steps, okTitle: "committed + pushed",
+                                      okDetail: "\(n) file\(n == 1 ? "" : "s") → \(br)\(signed ? " · signed" : " · UNSIGNED")")
+            if ok { await store.rescan(repoId: r.id) }
         }
     }
 }
@@ -175,24 +220,23 @@ struct CommitSheet: View {
 
 struct PruneSheet: View {
     @Environment(AppState.self) private var app
+    @Environment(FleetStore.self) private var store
     let repo: Repo
-    private var stale: [Worktree] { repo.worktrees.filter { $0.state != .active } }
+    /// ONLY abandoned worktrees are prune candidates — a stale one can still hold
+    /// unpushed commits, so it is never auto-removed.
+    private var abandoned: [Worktree] { repo.worktrees.filter { $0.state == .abandoned } }
 
     var body: some View {
         SheetShell(title: "Prune worktrees · \(repo.name)", icon: "trash-2",
-                   width: OverlayLayout.sheetW, confirm: "Prune \(stale.count)", confirmIcon: "trash-2",
-                   confirmVariant: .danger) {
-            app.closeSheet()
-            app.toast("pruned \(stale.count) worktrees",
-                      "git worktree remove × \(stale.count) · disk reclaimed", .ok)
-        } content: {
+                   width: OverlayLayout.sheetW, confirm: "Prune \(abandoned.count)", confirmIcon: "trash-2",
+                   confirmVariant: .danger, confirmDisabled: abandoned.isEmpty, onConfirm: perform) {
             VStack(alignment: .leading, spacing: Theme.space.x3) {
-                SheetProse(text: "these worktrees are stale or abandoned. git worktree remove deletes the working directory; branches and commits are kept.")
-                if stale.isEmpty {
-                    EmptyState(icon: "check", tone: .ok, text: "no non-active worktrees to prune")
+                SheetProse(text: "removes these ABANDONED worktrees with git worktree remove (no --force): the working directory goes, branches and commits stay. A worktree with unpushed commits, or one git finds dirty, is refused — never force-destroyed.")
+                if abandoned.isEmpty {
+                    EmptyState(icon: "check", tone: .ok, text: "no abandoned worktrees to prune")
                 } else {
                     VStack(spacing: 0) {
-                        ForEach(stale) { w in
+                        ForEach(abandoned) { w in
                             HStack(spacing: Theme.space.x2_5) {
                                 VibeIcon("git-branch", size: 13, color: Theme.color.tone(w.state.tone))
                                 Text(w.branch)
@@ -203,7 +247,8 @@ struct PruneSheet: View {
                                 Text("\(w.created) · \(w.commits) commits")
                                     .font(VibeFont.mono(VibeFont.size.xxs))
                                     .foregroundStyle(Theme.color.textMuted)
-                                StatusBadge(text: w.state.rawValue, tone: w.state.tone, small: true)
+                                StatusBadge(text: w.commits > 0 ? "unpushed — kept" : w.state.rawValue,
+                                            tone: w.commits > 0 ? .warn : w.state.tone, small: true)
                             }
                             .padding(.horizontal, 11).padding(.vertical, 9)
                             .overlay(alignment: .bottom) { Rectangle().fill(Theme.color.borderSubtle).frame(height: 1) }
@@ -214,6 +259,17 @@ struct PruneSheet: View {
                         .strokeBorder(Theme.color.border, lineWidth: 1))
                 }
             }
+        }
+    }
+
+    private func perform() {
+        let targets = abandoned
+        guard !targets.isEmpty else { return }
+        app.closeSheet()
+        let r = repo, host = store.fleet.scanner.host
+        Task { @MainActor in
+            let ok = await app.pruneWorktrees(r, worktrees: targets, host: host)
+            if ok { await store.rescan(repoId: r.id) }
         }
     }
 }
