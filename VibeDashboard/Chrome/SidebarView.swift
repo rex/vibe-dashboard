@@ -33,15 +33,19 @@ struct SidebarView: View {
 
     var body: some View {
         let s = store.fleet.scanner
+        let lastSwept = s.lastSweepAt.map { RelTime.ago($0, now: Date()) } ?? "not yet"
         VStack(spacing: 0) {
             HStack(spacing: Theme.space.x2) {
                 VibeIcon("hard-drive", size: 14, color: Theme.color.textMuted)
                 Text(s.root).font(VibeFont.mono(VibeFont.size.sm)).foregroundStyle(Theme.color.textPrimary).lineLimit(1)
                 Spacer(minLength: 0)
+                // Honest state: lime "scanning" only while a scan runs; muted "idle"
+                // otherwise. There is no live watcher, so nothing claims "live".
                 HStack(spacing: 5) {
-                    Circle().fill(Theme.color.ok).frame(width: 6, height: 6)
-                        .shadow(color: ColorPalette.lime400.opacity(0.3), radius: 4)
-                    Text("live").vibeMicroLabel(9, color: Theme.color.ok)
+                    Circle().fill(store.isScanning ? Theme.color.ok : Theme.color.textGhost).frame(width: 6, height: 6)
+                        .shadow(color: store.isScanning ? ColorPalette.lime400.opacity(0.3) : .clear, radius: 4)
+                    Text(store.isScanning ? "scanning" : "idle")
+                        .vibeMicroLabel(9, color: store.isScanning ? Theme.color.ok : Theme.color.textGhost)
                 }
             }
             .padding(.horizontal, Theme.space.x3).padding(.top, 11).padding(.bottom, Theme.space.x2)
@@ -82,10 +86,11 @@ struct SidebarView: View {
             }
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: Theme.space.x2) {
-                    VibeIcon("radar", size: 13, color: Theme.color.ok)
-                    Text("scanner online · \(s.host)").font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textSecondary)
+                    VibeIcon("radar", size: 13, color: store.isScanning ? Theme.color.ok : Theme.color.textMuted)
+                    Text("manual scan · \(s.host)").font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textSecondary)
                 }
-                Text("fsevents watching · last sweep \(s.lastSweep) · \(s.swept)")
+                // Real: last-swept relative time (ages via RelTime.ago) + measured duration.
+                Text("last swept \(lastSwept) · \(s.swept)")
                     .font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textFaint).lineLimit(2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

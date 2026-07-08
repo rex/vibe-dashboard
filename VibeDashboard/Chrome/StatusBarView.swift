@@ -9,15 +9,18 @@ struct StatusBarView: View {
         let t = store.fleet.totals
         let s = store.fleet.scanner
         let b = store.fleet.appBuild
+        let lastSwept = s.lastSweepAt.map { RelTime.ago($0, now: Date()) } ?? "—"
         HStack(spacing: 14) {
             HStack(spacing: 6) {
                 HealthDot(health: .ok, size: 6)
-                Text("\(s.watching ? "watching" : "idle") \(s.root)")
+                // Real state — scans are manual; nothing "watches" continuously.
+                Text("\(store.isScanning ? "scanning" : "idle") \(s.root)")
             }
             dot
             Text("\(t.repos) repos · \(t.workspaces) workspaces")
             dot
-            Text("swept \(s.swept)")
+            // Real last-swept relative time (ages) + measured scan duration.
+            Text("swept \(lastSwept) · \(s.swept)")
             if store.isScanning {
                 ScanBar()
             }

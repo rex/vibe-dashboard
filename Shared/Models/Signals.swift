@@ -63,16 +63,20 @@ struct Hygiene: Sendable, Hashable {
     var stashCount: Int = 0            // forgotten `git stash` entries
 }
 
+/// A detected live coding-agent session, populated from real git/process facts —
+/// never constants. `linesAdded`/`linesRemoved` are nil when the diff could not be
+/// measured (e.g. a repo with no HEAD) so the UI can HIDE them rather than render a
+/// fabricated "+0 −0"; a measured no-op is a real 0 and is shown.
 struct AgentInfo: Sendable, Hashable {
     var active: Bool = false
     var tool: String? = nil
     var branch: String? = nil
     var elapsed: String? = nil
-    var filesTouched: Int = 0
-    var linesAdded: Int? = nil
-    var linesRemoved: Int? = nil
-    var lastActivity: String = "—"
-    var note: String = "idle"
+    var filesTouched: Int = 0        // real: files changed vs HEAD (git diff --numstat)
+    var linesAdded: Int? = nil       // real added lines; nil = not measurable (don't render)
+    var linesRemoved: Int? = nil     // real removed lines; nil = not measurable (don't render)
+    var lastActivity: String = "—"   // RelTime.ago of the newest working-tree mtime; "—" if unknown
+    var note: String = "idle"        // honest summary derived from the real diff
 }
 
 struct DocFile: Sendable, Hashable {

@@ -3,6 +3,15 @@
 import Foundation
 
 enum Derive {
+    /// A VIBE.yaml that parsed but declares no enforceable policy — an empty doc or a
+    /// bare `project:` stub. Detected from the already-built policy sections, so NO new
+    /// Repo field is needed: the repo has a parseable VIBE.yaml yet not one
+    /// architecture / quality_gates / workflow / security section is present. This is
+    /// exactly the "reads as managed, governs nothing" laundering the app must surface.
+    static func isPolicyStub(_ r: Repo) -> Bool {
+        r.vibePresent && !r.vibeMalformed && PolicyProbe.declaresNoEnforceablePolicy(sections: r.policy)
+    }
+
     static func gates(_ r: Repo) -> [Gate] {
         var g: [Gate] = []
         // The gate machinery itself: a policy'd repo with no Makefile can't run ANY
@@ -55,6 +64,7 @@ enum Derive {
         case .skeleton: break
         }
         if r.vibeMalformed { p += 20 }
+        if isPolicyStub(r) { p += 20 }   // parses as managed but declares nothing enforceable
         if !r.hygiene.conflictFiles.isEmpty { p += 25 }
         if !r.hygiene.secretFiles.isEmpty { p += 20 }
         if !r.hygiene.trackedJunk.isEmpty { p += 8 }
@@ -79,6 +89,7 @@ enum Derive {
             || r.docs.changelog.status == .fail
             || r.docs.taskState.status == .fail
             || r.hooks.contains { $0.status == .missing }
+            || isPolicyStub(r)                                     // parses as managed, governs nothing
         if danger { return .danger }
         // Amber = real-but-not-urgent: skeleton drift, incomplete scaffold, coverage,
         // flaky MCP, stray junk files, parked stashes. Soft-limit files are IN POLICY.
@@ -175,6 +186,14 @@ enum Derive {
         } else if r.management == .partial {
             add(.med, "Managed", "no Makefile — gates can't run",
                 "Policy is declared but there's no Makefile, so not one gate can actually execute.", "open file")
+        }
+        // A VIBE.yaml that PARSES but declares no enforceable policy launders a repo
+        // into "managed" while governing nothing — the exact green-but-fake this app
+        // exists to catch. Fires independently of management level (even .skeleton, when
+        // a Makefile is present but the policy body is a stub).
+        if isPolicyStub(r) {
+            add(.high, "Managed", "VIBE.yaml declares no enforceable policy",
+                "It parses — so the repo reads as managed — but with no architecture, quality_gates, workflow, or security section, not one rule is actually enforced.", "open file")
         }
         // worktree — dirty/unpushed trees are PROBLEMS (the nasty-surprise headline)
         if signedRequired && !r.worktree.signed {

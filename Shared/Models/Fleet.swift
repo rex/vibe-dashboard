@@ -2,15 +2,24 @@
 
 import Foundation
 
+/// State of the on-demand fleet scan. This app runs a MANUAL scan (triggered by
+/// the user / a rescan) — there is no fsevents watcher and no sweep timer, so
+/// nothing here may imply continuous monitoring. `lastSweepAt` + `swept` are the
+/// only real telemetry; the legacy flags below are kept solely so readers outside
+/// this slice keep compiling and are no longer rendered as "live/online/watching".
 struct ScannerState: Sendable, Hashable {
-    var online: Bool = true
     var host: String = "localhost"
     var root: String = "~/Code"
-    var sweep: String = "10s"
-    var lastSweep: String = "just now"
-    var watching: Bool = true
-    var swept: String = "—"
+    var lastSweepAt: Date? = nil     // real completion time of the last scan (nil = never swept)
+    var swept: String = "—"          // real wall-clock duration of the last scan ("12.3 ms")
     var scanning: Bool = false
+
+    // Deprecated fabrications — no watcher/timer exists. Kept for source
+    // compatibility (FleetView still reads `lastSweep`); prefer lastSweepAt.
+    var lastSweep: String = "—"      // frozen-at-scan relative string; use lastSweepAt + RelTime.ago
+    var online: Bool = false
+    var watching: Bool = false
+    var sweep: String = ""
 }
 
 struct AppBuild: Sendable, Hashable {

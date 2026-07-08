@@ -195,12 +195,14 @@ private struct LiveSessionCard: View {
                 .foregroundStyle(Theme.color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // diff meta
+            // diff meta — +/− only when the diff was actually measured (no fake "+0 −0")
             HStack(spacing: Theme.space.x1) {
-                Text("\(agent.filesTouched) files").foregroundStyle(Theme.color.textMuted)
-                Text(" · ").foregroundStyle(Theme.color.textGhost)
-                Text("+\((agent.linesAdded ?? 0).formatted())").foregroundStyle(Theme.color.ok)
-                Text("\u{2212}\((agent.linesRemoved ?? 0).formatted())").foregroundStyle(Theme.color.danger)
+                Text("\(agent.filesTouched) file\(agent.filesTouched == 1 ? "" : "s")").foregroundStyle(Theme.color.textMuted)
+                if let added = agent.linesAdded, let removed = agent.linesRemoved {
+                    Text(" · ").foregroundStyle(Theme.color.textGhost)
+                    Text("+\(added.formatted())").foregroundStyle(Theme.color.ok)
+                    Text("\u{2212}\(removed.formatted())").foregroundStyle(Theme.color.danger)
+                }
                 Text(" · last write \(agent.lastActivity)").foregroundStyle(Theme.color.textMuted)
             }
             .font(VibeFont.mono(VibeFont.size.xxs))

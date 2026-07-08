@@ -172,11 +172,12 @@ private struct SessionCard: View {
 
     private var diffMeta: some View {
         HStack(alignment: .center, spacing: AgentsLayout.gap14) {
-            Text("\(agent.filesTouched) files").foregroundStyle(Theme.color.textMuted)
-            if let added = agent.linesAdded {
+            Text("\(agent.filesTouched) file\(agent.filesTouched == 1 ? "" : "s")").foregroundStyle(Theme.color.textMuted)
+            // Only render +/− when the diff was actually measured — never a fake "+0 −0".
+            if let added = agent.linesAdded, let removed = agent.linesRemoved {
                 HStack(spacing: 0) {
                     Text("+\(added.formatted())").foregroundStyle(Theme.color.ok)
-                    Text("\u{2212}\((agent.linesRemoved ?? 0).formatted())").foregroundStyle(Theme.color.danger)
+                    Text("\u{2212}\(removed.formatted())").foregroundStyle(Theme.color.danger)
                 }
             }
             Text("· last write \(agent.lastActivity)").foregroundStyle(Theme.color.textMuted)

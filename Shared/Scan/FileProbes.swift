@@ -66,6 +66,18 @@ enum FileProbes {
         (try? fm.contentsOfDirectory(atPath: abs))?.contains { $0.hasSuffix(ext) } ?? false
     }
 
+    /// One line-count convention shared by the census AND the doc probes. A trailing
+    /// newline TERMINATES the final line (not a phantom empty line after it), and CR is
+    /// ignored so CRLF counts the same as LF. A file with exactly `hard` content lines
+    /// + a trailing newline therefore counts as `hard`, not `hard+1` — the off-by-one
+    /// that manufactured false god-files. Pure + testable.
+    static func lineCount(_ data: Data) -> Int {
+        guard !data.isEmpty else { return 0 }
+        var newlines = 0
+        for byte in data where byte == 0x0A { newlines += 1 }
+        return data.last == 0x0A ? newlines : newlines + 1
+    }
+
     // ---- line census + free hygiene facts (one walk, one read per file) ----
     struct WalkResult: Sendable { var census = Census(); var conflicts: [String] = []; var junk: [String] = [] }
 
@@ -95,7 +107,7 @@ enum FileProbes {
             guard let data = try? Data(contentsOf: url) else { continue }
             if scanConflicts, data.count < 4_000_000, HygieneProbe.hasConflictMarkers(data) { w.conflicts.append(rel) }
             guard isCode else { continue }
-            let lines = data.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 } + 1
+            let lines = lineCount(data)
             c.scanned += 1
             let excluded = excludeMatchers.contains { Glob.matches(path: rel, regex: $0) }
             if lines > soft && !excluded { c.softCount += 1 }
@@ -130,7 +142,7 @@ enum FileProbes {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
             return DocFile(lines: 0, bytes: 0, status: .skip, present: false)
         }
-        let lines = data.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 }
+        let lines = lineCount(data)
         let (soft, hard) = Reference.docLimits[limit] ?? (300, 500)
         let status: GateStatus = lines > hard ? .fail : (lines > soft ? .warn : .ok)
         return DocFile(lines: lines, bytes: data.count, status: status, present: true)
@@ -142,14 +154,46 @@ enum FileProbes {
         if let d = ISO8601DateFormatter().date(from: last.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) {
             info.lastUpdated = RelTime.ago(d, now: now)
         }
-        let hashR = await ProcessRunner.git(["log", "-1", "--format=%H", "--", "CHANGELOG.md"], cwd: abs)
-        let hash = hashR.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !hash.isEmpty {
-            let cnt = await ProcessRunner.git(["rev-list", "--count", "\(hash)..HEAD"], cwd: abs)
-            info.behind = Int(cnt.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
-        }
-        info.status = info.behind > 8 ? .fail : (info.behind > 3 ? .warn : .ok)
+        // Staleness is a VERSION DELTA, not a raw commit count. The pre-commit hook bumps
+        // VERSION on every commit, so "commits since CHANGELOG last changed" manufactured
+        // a DANGER out of ordinary volume (anti-alert-fatigue violation). Compare the
+        // changelog's top `## [x.y.z]` header to the VERSION file: when they match, the
+        // changelog is current no matter how many commits have landed.
+        let current = (try? String(contentsOfFile: join(abs, "VERSION"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let s = changelogStaleness(current: current, documented: changelogTopVersion(abs))
+        info.behind = s.behind
+        info.status = s.status
         return info
+    }
+
+    /// The first `## [x.y.z]` header version in CHANGELOG.md (I/O wrapper).
+    static func changelogTopVersion(_ abs: String) -> String? {
+        (try? String(contentsOfFile: join(abs, "CHANGELOG.md"), encoding: .utf8)).flatMap(firstSemVerHeader)
+    }
+
+    /// Pure: the first `##`-level header line carrying an x.y.z version (skips a
+    /// leading `## [Unreleased]`).
+    static func firstSemVerHeader(_ text: String) -> String? {
+        for raw in text.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("##"),
+                  let m = line.range(of: #"[0-9]+\.[0-9]+\.[0-9]+"#, options: .regularExpression) else { continue }
+            return String(line[m])
+        }
+        return nil
+    }
+
+    /// Pure staleness from documented (changelog top) vs current (VERSION) semver.
+    /// Indeterminate versions ⇒ (0, .ok): never manufacture a failure we can't measure.
+    /// A matching pair is always in-sync regardless of commit volume.
+    static func changelogStaleness(current: String?, documented: String?) -> (behind: Int, status: GateStatus) {
+        guard let cur = SemVer(current), let doc = SemVer(documented) else { return (0, .ok) }
+        if cur <= doc { return (0, .ok) }                                    // documented (or changelog ahead)
+        if cur.major != doc.major { return (Swift.max(1, cur.major - doc.major), .fail) }
+        if cur.minor != doc.minor { let d = cur.minor - doc.minor; return (d, d >= 3 ? .fail : .warn) }
+        let d = cur.patch - doc.patch
+        return (d, d >= 8 ? .warn : .ok)                                     // patch-only drift is the mildest
     }
 
     // ---- Serena ----
@@ -170,5 +214,21 @@ enum FileProbes {
             s.active = now.timeIntervalSince(mod) < 900   // touched in last 15 min
         }
         return s
+    }
+}
+
+/// Minimal semantic-version parse + compare backing changelog-staleness grading.
+/// Tolerates a leading `v`, surrounding brackets, or trailing pre-release text — it
+/// locks onto the first `x.y.z` in the string.
+struct SemVer: Comparable, Sendable {
+    let major: Int, minor: Int, patch: Int
+    init?(_ s: String?) {
+        guard let s, let m = s.range(of: #"[0-9]+\.[0-9]+\.[0-9]+"#, options: .regularExpression) else { return nil }
+        let parts = s[m].split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        (major, minor, patch) = (parts[0], parts[1], parts[2])
+    }
+    static func < (a: SemVer, b: SemVer) -> Bool {
+        (a.major, a.minor, a.patch) < (b.major, b.minor, b.patch)
     }
 }

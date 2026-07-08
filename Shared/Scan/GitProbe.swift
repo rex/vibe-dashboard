@@ -44,12 +44,13 @@ enum GitProbe {
             f.worktree.unpushed = c
         }
 
-        // Signature of the last commit. If there's no commit yet (or `log` fails) we
-        // simply don't know — leave `signed` at its default (true) rather than
-        // inferring from `commit.gpgsign` config, which grades intent, not fact, and
-        // wrongly flags a 0-commit repo as having "unsigned commits".
-        if let g = await line(["log", "-1", "--format=%G?"], abs) {
-            f.worktree.signed = ["G", "U", "X", "Y", "R", "E"].contains(g)
+        // Signature across the last N commits (bounded — no full-history walk). Sampling
+        // only HEAD is false-pos/neg-prone under an all-commits-signed policy, so we mark
+        // signed only when EVERY recent commit carries a signature. No commit yet (or
+        // `log` fails) ⇒ indeterminate ⇒ keep the default (true) rather than inferring
+        // from config (which grades intent, not fact) or flagging a 0-commit repo.
+        if let out = await line(["log", "-20", "--format=%G?"], abs), let all = Self.allSigned(out) {
+            f.worktree.signed = all
         }
 
         f.remotes = await remotes(abs, unpushed: f.worktree.unpushed)
@@ -62,6 +63,19 @@ enum GitProbe {
         guard r.ok else { return nil }
         let s = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         return s.isEmpty ? nil : s
+    }
+
+    /// Do ALL sampled commits carry a signature? `nil` when the sample is empty
+    /// (indeterminate — caller keeps its default). Pure + testable. `%G?` codes:
+    /// G/U/X/Y/R/E each mean a signature is present (valid, unknown-validity, expired,
+    /// expired-key, revoked, or uncheckable); `N` = none, `B` = bad — neither counts.
+    static func allSigned(_ log: String) -> Bool? {
+        let present: Set<String> = ["G", "U", "X", "Y", "R", "E"]
+        let codes = log.split(whereSeparator: { $0 == "\n" })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !codes.isEmpty else { return nil }
+        return codes.allSatisfy { present.contains($0) }
     }
 
     private static func remotes(_ abs: String, unpushed: Int) async -> [Remote] {
@@ -82,25 +96,42 @@ enum GitProbe {
 
     private static func worktrees(_ abs: String, now: Date) async -> [Worktree] {
         let r = await ProcessRunner.git(["worktree", "list", "--porcelain"], cwd: abs)
-        var pairs: [(path: String, branch: String)] = []
-        var curPath: String? = nil
-        var curBranch: String? = nil
-        func flush() {
-            if let p = curPath, p != abs, let br = curBranch { pairs.append((p, br)) }
-            curPath = nil; curBranch = nil
-        }
-        for ln in r.stdout.split(separator: "\n", omittingEmptySubsequences: false) {
-            if ln.hasPrefix("worktree ") { flush(); curPath = String(ln.dropFirst(9)) }
-            else if ln.hasPrefix("branch ") { curBranch = String(ln.dropFirst(7)).replacingOccurrences(of: "refs/heads/", with: "") }
-            else if ln.isEmpty { flush() }
-        }
-        flush()
-
         var out: [Worktree] = []
-        for pair in pairs {
+        for pair in parseWorktrees(r.stdout, repoAbs: abs) {
             out.append(await classify(path: pair.path, branch: pair.branch, now: now))
         }
         return out
+    }
+
+    /// Parse `git worktree list --porcelain` into (path, branch) pairs, EXCLUDING the
+    /// main worktree (`repoAbs`). Pure + testable. A DETACHED worktree emits
+    /// `HEAD <sha>` + `detached` with no `branch ` line; the old parser required a
+    /// branch line and silently DROPPED those — a classic place for stranded work.
+    /// Record them under a synthetic `detached@<short-sha>` label, reusing the existing
+    /// Worktree.branch field (no model change).
+    static func parseWorktrees(_ stdout: String, repoAbs: String) -> [(path: String, branch: String)] {
+        var pairs: [(path: String, branch: String)] = []
+        var curPath: String?, curBranch: String?, curHead: String?
+        var curDetached = false
+        func flush() {
+            defer { curPath = nil; curBranch = nil; curHead = nil; curDetached = false }
+            guard let p = curPath, p != repoAbs else { return }
+            if let br = curBranch {
+                pairs.append((p, br))
+            } else if curDetached {
+                let short = curHead.map { String($0.prefix(8)) } ?? "unknown"
+                pairs.append((p, "detached@\(short)"))
+            }
+        }
+        for ln in stdout.split(separator: "\n", omittingEmptySubsequences: false) {
+            if ln.hasPrefix("worktree ") { flush(); curPath = String(ln.dropFirst(9)) }
+            else if ln.hasPrefix("HEAD ") { curHead = String(ln.dropFirst(5)) }
+            else if ln.hasPrefix("branch ") { curBranch = String(ln.dropFirst(7)).replacingOccurrences(of: "refs/heads/", with: "") }
+            else if ln == "detached" { curDetached = true }
+            else if ln.isEmpty { flush() }
+        }
+        flush()
+        return pairs
     }
 
     /// Worktree life classification from last-commit age + unpushed commit count.

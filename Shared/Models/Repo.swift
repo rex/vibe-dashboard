@@ -52,7 +52,8 @@ struct Repo: Identifiable, Sendable, Hashable {
     // rollup
     var health: Health = .ok
     var compliance: Int = 100
-    var checked: String = "just now"
+    var checkedAt: Date = Date()   // real wall-clock time this repo was last probed
+    var checked: String = "just now"   // deprecated: prefer checkedAt + RelTime.ago (ages between scans)
 
     // signals
     var gates: [Gate] = []

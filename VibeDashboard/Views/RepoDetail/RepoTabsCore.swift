@@ -64,7 +64,7 @@ struct RepoOverviewTab: View {
             MetaRow(key: "skeleton") { SkeletonBadge(drift: repo.drift) }
             MetaRow(key: "build") { Text(repo.build.version) }
             MetaRow(key: "commit") { Text(repo.build.commit) }
-            MetaRow(key: "checked") { Text(repo.checked) }
+            MetaRow(key: "checked") { Text(RelTime.ago(repo.checkedAt, now: Date())) }
         }
     }
 

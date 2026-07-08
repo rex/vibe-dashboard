@@ -13,12 +13,13 @@ enum HygieneProbe {
         h.conflictFiles = conflicts
         h.junkFiles = junk
 
-        // Secrets committed to git: .env (but never .env.example/.sample/.template),
-        // private keys, keystores. Tracked, not just present on disk.
-        let secretSpecs = [":(glob)**/.env", ":(glob).env", ":(glob)**/.env.*", ":(glob).env.*",
-                           ":(glob)**/*.pem", ":(glob)**/id_rsa", ":(glob)**/id_dsa",
-                           ":(glob)**/*.p12", ":(glob)**/*.pfx", ":(glob)**/*.keystore", ":(glob)**/*.jks"]
-        h.secretFiles = (await tracked(abs, secretSpecs)).filter { !isSafeExampleEnv($0) }
+        // Secrets committed to git. Pull the tracked-file list and classify in Swift
+        // (isTrackedSecret) — a pure, near-zero-false-positive call that catches modern
+        // key material (id_ed25519, id_ecdsa, *.key, cloud credentials, service-account
+        // keys) yet never flags a .env.example or a source file that merely mentions
+        // "credentials". Managed repos have small trees, so listing all tracked files is
+        // cheap; the classifier does the precise work git pathspecs used to.
+        h.secretFiles = (await tracked(abs, [])).filter { isTrackedSecret($0) }
 
         // Dependency / build output committed to git — never belongs in a repo.
         let junkSpecs = [":(glob)**/node_modules/**", ":(glob)**/DerivedData/**", ":(glob)**/.venv/**",
@@ -36,6 +37,47 @@ enum HygieneProbe {
         let r = await ProcessRunner.git(["ls-files", "--"] + specs, cwd: abs)
         guard r.ok else { return [] }
         return r.stdout.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+    }
+
+    /// Is a tracked path a committed secret worth flagging? Pure + testable and tuned
+    /// for near-zero false positives: key material is ALWAYS flagged; env / credential
+    /// files are flagged unless they're an obvious example/template; and a source file
+    /// that merely contains "credentials" in its name is NOT flagged.
+    static func isTrackedSecret(_ path: String) -> Bool {
+        let name = (path as NSString).lastPathComponent.lowercased()
+        // 1. Key material — always a secret. A private key is never an "example"
+        //    (the v0.22 contract): extensions + the well-known SSH key basenames.
+        for ext in ["pem", "key", "p12", "pfx", "keystore", "jks"] where name.hasSuffix("." + ext) { return true }
+        if ["id_rsa", "id_dsa", "id_ed25519", "id_ecdsa"].contains(name) { return true }
+        // 2. Env family — flagged unless it's a committed example/sample/template/dist.
+        if name == ".env" || name.hasPrefix(".env.") || name.hasSuffix(".env") { return !isSafeExampleEnv(path) }
+        // 3. Credential rc-files — a committed .netrc/.npmrc/.pypirc leaks auth tokens.
+        if [".netrc", ".npmrc", ".pypirc"].contains(name) { return true }
+        // 4. Cloud credentials + service-account keys (config-shaped, so example-guarded).
+        return isCredentialFile(name)
+    }
+
+    /// Cloud-credential / service-account files. Bare `credentials` (no extension) is
+    /// the classic ~/.aws/credentials shape; otherwise a config-ish extension is
+    /// required so a `CredentialsManager.swift` source file can't cry wolf. Example /
+    /// template variants are excluded.
+    private static func isCredentialFile(_ lowerName: String) -> Bool {
+        if lowerName == "credentials" { return true }
+        if isExampleName(lowerName) { return false }
+        let ext = (lowerName as NSString).pathExtension
+        let configExts: Set<String> = ["json", "yaml", "yml", "ini", "cfg", "conf", "config",
+                                       "properties", "toml", "txt", "csv", "xml"]
+        if lowerName.hasPrefix("serviceaccount") || lowerName.hasPrefix("service-account")
+            || lowerName.hasPrefix("service_account") { return ext == "json" }
+        return lowerName.contains("credentials") && configExts.contains(ext)
+    }
+
+    /// A committed placeholder — `foo.example.json`, `bar-sample`, `baz.template`.
+    private static func isExampleName(_ lowerName: String) -> Bool {
+        let stem = (lowerName as NSString).deletingPathExtension
+        return ["example", "sample", "template", "dist"].contains {
+            lowerName.contains("." + $0) || stem.hasSuffix($0) || stem.hasSuffix("-" + $0) || stem.hasSuffix("_" + $0)
+        }
     }
 
     /// Only `.env` VARIANTS named example/sample/template/dist are safe to commit.

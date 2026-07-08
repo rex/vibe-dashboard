@@ -10,6 +10,19 @@ enum PolicyProbe {
         return (try? Yams.load(yaml: text)) as? [String: Any]
     }
 
+    /// The VIBE.yaml sections that actually declare ENFORCEABLE policy — as opposed to
+    /// identity/metadata (`project:` / `stack:`). A file with none of these parses but
+    /// governs nothing.
+    static let enforceableSections = ["architecture", "quality_gates", "workflow", "security"]
+
+    /// True when a PARSED VIBE.yaml declares no enforceable policy — an empty doc or a
+    /// bare `project:` stub. Such a file launders a repo into "managed" while enforcing
+    /// nothing. Checked against the built `sections` (which already drop empty blocks),
+    /// so an `architecture:` with no body still reads as "no policy". Pure + testable.
+    static func declaresNoEnforceablePolicy(sections: [PolicySection]) -> Bool {
+        !sections.contains { enforceableSections.contains($0.section) }
+    }
+
     /// The sections + rows for the Policy tab, with a skeleton-diff mark.
     static func sections(_ dict: [String: Any]) -> [PolicySection] {
         let order = ["project", "stack", "architecture", "quality_gates", "security", "workflow", "docs", "apple", "deployment"]

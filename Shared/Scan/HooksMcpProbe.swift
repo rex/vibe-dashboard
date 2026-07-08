@@ -43,46 +43,84 @@ enum HooksMcpProbe {
         guard let token = cmd.split(whereSeparator: { $0 == " " }).map(String.init).first(where: { $0.contains(".sh") }) else {
             return .active
         }
-        // Resolve the script path: strip quotes, expand $CLAUDE_PROJECT_DIR / ~, make absolute.
+        // An unexpanded variable we can't verify — don't cry wolf.
+        guard let p = resolveScript(token, abs: abs) else { return .active }
+        guard fm.fileExists(atPath: p) else { return .missing }
+        if let data = fm.contents(atPath: p), data.count < 240, isStubScript(data) { return .nothing }
+        return .active
+    }
+
+    /// Resolve a hook's script token to an absolute path — strip quotes, expand
+    /// `$CLAUDE_PROJECT_DIR` / `~`, make a repo-relative path absolute. Returns nil when
+    /// an unexpanded variable remains (unverifiable → callers must not cry wolf).
+    static func resolveScript(_ token: String, abs: String) -> String? {
         var p = token.replacingOccurrences(of: "\"", with: "").replacingOccurrences(of: "'", with: "")
         p = p.replacingOccurrences(of: "${CLAUDE_PROJECT_DIR}", with: abs)
              .replacingOccurrences(of: "$CLAUDE_PROJECT_DIR", with: abs)
         if p.hasPrefix("~") { p = (p as NSString).expandingTildeInPath }
         if !p.hasPrefix("/") { p = join(abs, p) }
-        // An unexpanded variable we can't verify — don't cry wolf.
-        if p.contains("$") { return .active }
-        guard fm.fileExists(atPath: p) else { return .missing }
-        if let data = fm.contents(atPath: p), data.count < 240 {
-            let body = String(decoding: data, as: UTF8.self)
-            let meaningful = body.split(separator: "\n").filter {
-                let t = $0.trimmingCharacters(in: .whitespaces)
-                return !t.isEmpty && !t.hasPrefix("#") && !t.hasPrefix("echo") && t != "exit 0" && !t.hasPrefix("set ")
-            }
-            if meaningful.isEmpty { return .nothing }   // stub: nothing but boilerplate/exit 0
+        return p.contains("$") ? nil : p
+    }
+
+    /// A script body of nothing but boilerplate (shebang / comments / `set …` / `echo` /
+    /// `exit 0`) enforces nothing.
+    static func isStubScript(_ data: Data) -> Bool {
+        let body = String(decoding: data, as: UTF8.self)
+        return body.split(separator: "\n").allSatisfy {
+            let t = $0.trimmingCharacters(in: .whitespaces)
+            return t.isEmpty || t.hasPrefix("#") || t.hasPrefix("echo") || t == "exit 0" || t.hasPrefix("set ")
         }
-        return .active
     }
 
     private static func gitHooks(_ abs: String) -> [Hook] {
-        var dir = join(abs, ".git/hooks")
-        // honor core.hooksPath if configured
-        if let cfg = try? String(contentsOfFile: join(abs, ".git/config"), encoding: .utf8),
-           let hp = cfg.split(separator: "\n").first(where: { $0.contains("hooksPath") })?.split(separator: "=").last {
-            dir = join(abs, hp.trimmingCharacters(in: .whitespaces))
-        }
+        let dir = gitHooksDir(abs)
         guard let items = try? fm.contentsOfDirectory(atPath: dir) else { return [] }
         var out: [Hook] = []
         for name in items where !name.hasSuffix(".sample") {
             let path = join(dir, name)
             guard fm.isExecutableFile(atPath: path) else { continue }
-            let body = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+            let data = fm.contents(atPath: path)
+            let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
             let cmd = body.split(separator: "\n").first(where: {
                 let t = $0.trimmingCharacters(in: .whitespaces)
                 return !t.isEmpty && !t.hasPrefix("#") && !t.hasPrefix("set ")
             }).map { String($0).trimmingCharacters(in: .whitespaces) } ?? name
-            out.append(Hook(src: "git", event: name, matcher: nil, command: cmd, status: .active))
+            out.append(Hook(src: "git", event: name, matcher: nil, command: cmd,
+                            status: classifyGitHook(body: body, data: data, abs: abs)))
         }
         return out
+    }
+
+    /// The active git-hooks directory: `.git/hooks` unless `core.hooksPath` overrides it.
+    /// A configured hooksPath may be ABSOLUTE (or `~`) — the old code joined it onto the
+    /// repo root, which mis-formed the path and made the real hooks invisible; handle
+    /// absolute, tilde, and repo-relative forms.
+    static func gitHooksDir(_ abs: String) -> String {
+        guard let cfg = try? String(contentsOfFile: join(abs, ".git/config"), encoding: .utf8),
+              let raw = cfg.split(separator: "\n").first(where: { $0.contains("hooksPath") })?.split(separator: "=").last else {
+            return join(abs, ".git/hooks")
+        }
+        var hp = String(raw).trimmingCharacters(in: .whitespaces)
+        if hp.hasPrefix("~") { hp = (hp as NSString).expandingTildeInPath }
+        return hp.hasPrefix("/") ? hp : join(abs, hp)
+    }
+
+    /// Classify a git hook by its body — the same stub/missing logic claude hooks get.
+    /// A boilerplate-only body enforces nothing (.nothing); a hook that delegates to a
+    /// `*.sh` that's absent runs nothing (.missing); a non-text (binary/compiled) hook
+    /// is doing real work we can't introspect (.active).
+    static func classifyGitHook(body: String, data: Data?, abs: String) -> HookStatus {
+        if body.isEmpty { return (data?.isEmpty ?? true) ? .nothing : .active }
+        let meaningful = body.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter {
+            !$0.isEmpty && !$0.hasPrefix("#") && !$0.hasPrefix("echo") && $0 != "exit 0" && !$0.hasPrefix("set ")
+        }
+        if meaningful.isEmpty { return .nothing }
+        for line in meaningful {
+            for tok in line.split(whereSeparator: { $0 == " " }).map(String.init) where tok.contains(".sh") {
+                if let p = resolveScript(tok, abs: abs), !fm.fileExists(atPath: p) { return .missing }
+            }
+        }
+        return .active
     }
 
     private static func cursorHooks(_ abs: String) -> [Hook] {

@@ -69,32 +69,29 @@ struct FleetScanner: Sendable {
             for r in repos { if let p = r.parentId { childrenOf[p, default: []].append(r.id) } }
         }
 
-        // Live agent sessions → attach to the deepest matching repo.
-        let sessions = await AgentProbe.sessions()
-        for s in sessions {
-            guard let idx = repos.indices
-                .filter({ s.cwd == repos[$0].absolutePath || s.cwd.hasPrefix(repos[$0].absolutePath + "/") })
-                .max(by: { repos[$0].absolutePath.count < repos[$1].absolutePath.count }) else { continue }
-            repos[idx].agent = AgentInfo(active: true, tool: s.tool, branch: repos[idx].build.branch,
-                                         elapsed: s.elapsed, filesTouched: repos[idx].worktree.unstaged,
-                                         lastActivity: "just now", note: "live edit session")
-        }
+        // Live agent sessions → attach to the deepest matching repo, with REAL
+        // measured diff/mtime telemetry (never constants).
+        await attachLiveSessions(&repos, now: now)
 
         // Mark workspaces + derive health/compliance/gates/surprises.
         for i in repos.indices {
             let kids = childrenOf[repos[i].id] ?? []
-            if !kids.isEmpty || FleetScanner.fm.fileExists(atPath: (repos[i].absolutePath as NSString).appendingPathComponent("WORKSPACE.yaml")) {
+            let wsPath = (repos[i].absolutePath as NSString).appendingPathComponent("WORKSPACE.yaml")
+            if !kids.isEmpty || FleetScanner.fm.fileExists(atPath: wsPath) {
                 repos[i].kind = .workspace
                 repos[i].children = kids
             }
         }
         FleetScanner.grade(&repos)
 
-        // Scanner + activity + assembly.
+        // Scanner + activity + assembly. `lastSweepAt` is the REAL scan time (renders
+        // via RelTime.ago so it ages between manual scans); `swept` is the measured
+        // wall-clock duration. No online/watching/sweep fabrication.
         let elapsedMs = String(format: "%.1f ms", Date().timeIntervalSince(start) * 1000)
         let leaves = repos.filter { $0.kind != .workspace }
-        let scanner = ScannerState(online: true, host: host, root: displayPath(roots.first ?? "~/Code"),
-                                   sweep: "10s", lastSweep: "just now", watching: true, swept: elapsedMs)
+        let scanner = ScannerState(host: host, root: displayPath(roots.first ?? "~/Code"),
+                                   lastSweepAt: now, swept: elapsedMs,
+                                   lastSweep: RelTime.ago(now, now: now))
         var activity: [ActivityEntry] = []
         var seq = 0
         activity.append(ActivityEntry(t: "now", kind: "scan", repo: "—",
@@ -109,6 +106,33 @@ struct FleetScanner: Sendable {
         return Fleet.assemble(scanner: scanner, appBuild: appBuild, repos: repos,
                               activity: activity, autopilot: Reference.defaultAutopilot(repoCount: leaves.count),
                               catalog: Reference.skillCatalog)
+    }
+
+    /// Attach live agent sessions to the deepest matching repo, with REAL measured
+    /// diff/mtime telemetry (never constants).
+    private func attachLiveSessions(_ repos: inout [Repo], now: Date) async {
+        let sessions = await AgentProbe.sessions()
+        for s in sessions {
+            guard let idx = repos.indices
+                .filter({ s.cwd == repos[$0].absolutePath || s.cwd.hasPrefix(repos[$0].absolutePath + "/") })
+                .max(by: { repos[$0].absolutePath.count < repos[$1].absolutePath.count }) else { continue }
+            let work = await AgentProbe.workStat(cwd: repos[idx].absolutePath, now: now)
+            repos[idx].agent = AgentInfo(
+                active: true, tool: s.tool, branch: repos[idx].build.branch, elapsed: s.elapsed,
+                filesTouched: work.filesTouched,
+                linesAdded: work.measured ? work.linesAdded : nil,
+                linesRemoved: work.measured ? work.linesRemoved : nil,
+                lastActivity: work.lastWrite.map { RelTime.ago($0, now: now) } ?? "—",
+                note: agentNote(work, clean: repos[idx].worktree.clean))
+        }
+    }
+
+    /// Honest one-line session summary built from the measured diff — no constants.
+    private func agentNote(_ work: AgentProbe.WorkStat, clean: Bool) -> String {
+        if work.filesTouched > 0 {
+            return "\(work.filesTouched) file\(work.filesTouched == 1 ? "" : "s") changed since last commit"
+        }
+        return clean ? "live session · working tree clean" : "untracked changes in the working tree"
     }
 
     /// Derive gates/compliance/health/surprises for every repo, in TWO passes so
@@ -217,7 +241,8 @@ struct FleetScanner: Sendable {
         r.docs = docs
         r.coverageFloor = coverageFloor(vibe)
         r.makefile = DeriveIntegrations.makefile(abs)
-        r.scm = DeriveIntegrations.scm(branch: git.branch, remotes: git.remotes, worktree: git.worktree, signedRequired: signedRequired(vibe))
+        r.scm = DeriveIntegrations.scm(branch: git.branch, remotes: git.remotes,
+                                       worktree: git.worktree, signedRequired: signedRequired(vibe))
         r.ci = DeriveIntegrations.ci(abs, stack: idn.stack)
         r.containers = DeriveIntegrations.containers(abs)
         r.skills = DeriveIntegrations.skills(abs, vibe: vibe, stack: idn.stack)
@@ -233,7 +258,7 @@ struct FleetScanner: Sendable {
             || FileProbes.exists(FileProbes.join(abs, ".claude"))
         r.management = classifyManagement(vibePresent: vibePresent, parsed: vibe != nil, makefileCount: r.makefile.count)
         r.signedRequired = signedRequired(vibe)
-        r.checked = "just now"
+        r.checkedAt = now          // real probe time — RepoTabsCore renders RelTime.ago so it ages
         return r
     }
 
