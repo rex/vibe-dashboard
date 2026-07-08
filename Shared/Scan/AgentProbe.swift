@@ -109,7 +109,7 @@ enum AgentProbe {
               let state = lifecycle(age: now.timeIntervalSince(mtime)) else { return nil }
         let head = fileHead(path)
         guard let cwd = extractJSONString(head, key: "cwd"), !cwd.isEmpty else { return nil }
-        let start = extractJSONString(head, key: "timestamp").flatMap { ISO8601DateFormatter().date(from: $0) }
+        let start = extractJSONString(head, key: "timestamp").flatMap { RelTime.iso.date(from: $0) }
         return Session(pid: 0, tool: tool, cwd: cwd,
                        elapsed: start.map { RelTime.compact(now.timeIntervalSince($0)) } ?? "live",
                        lastActivity: mtime, state: state)

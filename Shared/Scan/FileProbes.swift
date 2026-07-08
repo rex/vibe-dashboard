@@ -151,7 +151,7 @@ enum FileProbes {
         guard exists(join(abs, "CHANGELOG.md")) else { return ChangelogInfo(lastUpdated: "—", behind: 0, status: .ok, present: false) }
         var info = ChangelogInfo(present: true)
         let last = await ProcessRunner.git(["log", "-1", "--format=%cI", "--", "CHANGELOG.md"], cwd: abs)
-        if let d = ISO8601DateFormatter().date(from: last.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) {
+        if let d = RelTime.iso.date(from: last.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) {
             info.lastUpdated = RelTime.ago(d, now: now)
         }
         // Staleness is a VERSION DELTA, not a raw commit count. The pre-commit hook bumps

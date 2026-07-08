@@ -22,7 +22,7 @@ enum GitProbe {
 
         f.branch = await line(["rev-parse", "--abbrev-ref", "HEAD"], abs) ?? "main"
         f.commitShort = await line(["rev-parse", "--short", "HEAD"], abs) ?? "-------"
-        if let iso = await line(["log", "-1", "--format=%cI"], abs), let d = ISO8601DateFormatter().date(from: iso) {
+        if let iso = await line(["log", "-1", "--format=%cI"], abs), let d = RelTime.iso.date(from: iso) {
             f.commitDateISO = iso
             f.commitDateRel = RelTime.ago(d, now: now)
         }
@@ -213,7 +213,7 @@ enum GitProbe {
     private static func classify(path: String, branch: String, now: Date) async -> Worktree {
         var lastRel = "—"
         var age: TimeInterval = 0
-        if let iso = await line(["log", "-1", "--format=%cI"], path), let d = ISO8601DateFormatter().date(from: iso) {
+        if let iso = await line(["log", "-1", "--format=%cI"], path), let d = RelTime.iso.date(from: iso) {
             lastRel = RelTime.ago(d, now: now)
             age = now.timeIntervalSince(d)
         }

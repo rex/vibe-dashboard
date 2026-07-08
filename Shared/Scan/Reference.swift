@@ -66,6 +66,11 @@ enum Reference {
 
 /// Relative-time formatting ("3s ago" … "5 weeks ago").
 enum RelTime {
+    /// Shared ISO-8601 parser — hoisted out of the scan hot path (was allocated per
+    /// commit, per linked worktree, per changelog across the whole fleet). `date(from:)`
+    /// is thread-safe, so one instance serves the concurrent probes.
+    nonisolated(unsafe) static let iso = ISO8601DateFormatter()
+
     static func ago(_ date: Date, now: Date) -> String {
         let s = Swift.max(0, now.timeIntervalSince(date))
         switch s {
