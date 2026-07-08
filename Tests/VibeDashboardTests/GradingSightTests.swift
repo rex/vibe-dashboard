@@ -132,18 +132,19 @@ struct GradingSightTests {
         #expect(byPath["/repo/det"] == "detached@cccccccc")  // detached recorded (was silently dropped)
     }
 
-    // MARK: Task 2 — signature samples the last N commits, not just HEAD
+    // MARK: Task 2 — signature detected by PRESENCE (raw gpgsig header), gpg never run
 
-    @Test("signedVerdict: HEAD-signed or majority-signed passes; only a genuinely-unsigned repo fails")
-    func signedSampling() {
-        #expect(GitProbe.signedVerdict("G\nG\nG") == true)
-        #expect(GitProbe.signedVerdict("G\nN\nG") == true)    // HEAD signed ⇒ signing now (the real-world false-positive case)
-        #expect(GitProbe.signedVerdict("G\nN\nN\nN") == true) // HEAD signed even if history is mostly unsigned
-        #expect(GitProbe.signedVerdict("N\nG\nG\nG") == true) // stray unsigned HEAD but majority signed ⇒ tolerated
-        #expect(GitProbe.signedVerdict("U\nX\nE") == true)    // present-but-unvalidated codes count as signed
-        #expect(GitProbe.signedVerdict("N\nN\nN") == false)   // genuinely not signing ⇒ flagged
-        #expect(GitProbe.signedVerdict("N\nN\nG") == false)   // unsigned HEAD + minority signed ⇒ flagged
-        #expect(GitProbe.signedVerdict("") == true)           // no commits ⇒ nothing to be unsigned
+    @Test("isSignedCommitObject: a gpgsig header ⇒ signed; message mentions don't false-positive")
+    func signaturePresence() {
+        let signed = "tree a\nparent b\nauthor X 1 +0\ncommitter X 1 +0\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n\nmsg"
+        let ssh = "tree a\nauthor X 1 +0\ncommitter X 1 +0\ngpgsig-sha256 -----BEGIN SSH SIGNATURE-----\n \n\nmsg"
+        let unsigned = "tree a\nparent b\nauthor X 1 +0\ncommitter X 1 +0\n\nmsg"
+        let mentionsInBody = "tree a\nauthor X 1 +0\ncommitter X 1 +0\n\nrefactor gpgsig parsing"  // in the MESSAGE only
+        #expect(GitProbe.isSignedCommitObject(signed))
+        #expect(GitProbe.isSignedCommitObject(ssh))
+        #expect(!GitProbe.isSignedCommitObject(unsigned))
+        #expect(!GitProbe.isSignedCommitObject(mentionsInBody))   // header block only — no cry-wolf
+        #expect(!GitProbe.isSignedCommitObject(""))               // no object ⇒ not detectable here (caller keeps default)
     }
 
     // MARK: Task 6 — git hooks get stub/missing classification + absolute hooksPath

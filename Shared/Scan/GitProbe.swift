@@ -47,15 +47,15 @@ enum GitProbe {
             f.worktree.unpushed = c
         }
 
-        // Signature (bounded — last N, no full-history walk). A repo counts as "signing"
-        // if its HEAD commit is signed OR recent history is predominantly signed. Requiring
-        // EVERY commit signed (the old rule) cried wolf on any repo carrying a single stray
-        // unsigned merge/import/bot commit — which is most real repos — flooding the fleet
-        // with false "unsigned commits" DANGER. No commit yet (or `log` fails) ⇒ keep the
-        // default (true): a 0-commit repo has nothing to be unsigned.
-        if let out = await line(["log", "-20", "--format=%G?"], abs) {
-            f.worktree.signed = Self.signedVerdict(out)
-        }
+        // Is HEAD signed? Read the raw commit object and look for a `gpgsig` header — this
+        // detects a signature's PRESENCE without invoking gpg to VERIFY it. `git log
+        // --format=%G?` verifies, which — now that the PATH fix makes gpg reachable —
+        // spawns gpg per commit and HANGS the whole fleet scan on a keyserver/agent lookup
+        // for any foreign signing key (repos carry bot/other-author commits). Presence is
+        // the right signal for "does this repo sign" and it's instant, gpg-free, unblockable.
+        // No commit yet (cat-file fails) ⇒ keep the default (true): nothing to be unsigned.
+        let commitObj = await ProcessRunner.git(["cat-file", "commit", "HEAD"], cwd: abs)
+        if commitObj.ok { f.worktree.signed = Self.isSignedCommitObject(commitObj.stdout) }
 
         f.remotes = await remotes(abs, branch: f.branch)
         f.worktrees = await worktrees(abs, now: now)
@@ -69,21 +69,16 @@ enum GitProbe {
         return s.isEmpty ? nil : s
     }
 
-    /// Is this repo signing its commits? True if HEAD (the newest, `%G?`'s first line)
-    /// is signed, OR if the recent sample is majority-signed — tolerant of the odd
-    /// unsigned merge/import that would otherwise cry wolf, while still catching a repo
-    /// that genuinely isn't signing (e.g. all `N`). Empty sample ⇒ true (no commits to be
-    /// unsigned). Pure + testable. `%G?`: G/U/X/Y/R/E = a signature is present (valid,
-    /// unknown-validity, expired, expired-key, revoked, or uncheckable); `N`/`B` = none/bad.
-    static func signedVerdict(_ log: String) -> Bool {
-        let present: Set<String> = ["G", "U", "X", "Y", "R", "E"]
-        let codes = log.split(whereSeparator: { $0 == "\n" })
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        guard let head = codes.first else { return true }
-        if present.contains(head) { return true }              // HEAD signed ⇒ signing now
-        let signed = codes.filter { present.contains($0) }.count
-        return signed * 2 >= codes.count                       // majority signed ⇒ tolerate a stray unsigned HEAD
+    /// A commit is signed iff its raw object carries a `gpgsig` (or `gpgsig-sha256`)
+    /// header — in the HEADER block, before the blank line that starts the message, so a
+    /// message that merely mentions "gpgsig" doesn't false-positive. Pure + testable: no
+    /// gpg is ever run, so this can neither verify nor block. Presence, not validity, is
+    /// what "is this repo signing" needs (and it fixed the false-"unsigned" cry-wolf too).
+    static func isSignedCommitObject(_ raw: String) -> Bool {
+        let headers = raw.components(separatedBy: "\n\n").first ?? raw
+        return headers.split(separator: "\n").contains {
+            $0.hasPrefix("gpgsig ") || $0.hasPrefix("gpgsig-sha256 ")
+        }
     }
 
     /// All remotes with a PER-REMOTE ahead count. Captures BOTH (fetch) and (push)
