@@ -23,6 +23,11 @@ enum PolicyProbe {
                 if let skel = Reference.skeletonDefaults[flatKey], skel != row.v {
                     row.note = "delta"; row.skel = skel
                 }
+                // Keep the full list for array-valued keys so the UI can expand it —
+                // the collapsed `v` summary otherwise hides entries (e.g. exclude_globs).
+                if let arr = v as? [Any], arr.count > 3 {
+                    row.values = arr.map { fmt($0) }
+                }
                 rows.append(row)
             }
             if !rows.isEmpty { out.append(PolicySection(section: section, rows: rows)) }

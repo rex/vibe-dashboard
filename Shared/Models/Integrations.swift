@@ -170,6 +170,7 @@ struct PolicyRow: Identifiable, Sendable, Hashable {
     var note: String? = nil   // "delta" | "invalid"
     var skel: String? = nil
     var matched: String? = nil
+    var values: [String]? = nil   // full list for array-valued keys (exclude_globs, scope_globs…)
     var id: String { k }
 }
 struct PolicySection: Identifiable, Sendable, Hashable {

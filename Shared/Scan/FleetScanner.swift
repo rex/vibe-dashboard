@@ -183,7 +183,8 @@ struct FleetScanner: Sendable {
         let idn = FileProbes.identity(abs, vibe: vibe)
         let git = await GitProbe.probe(abs, now: now)
         let (soft, hard) = limits(vibe)
-        let walk = FileProbes.walk(abs, soft: soft, hard: hard, ansible: idn.stack.contains("ansible"))
+        let walk = FileProbes.walk(abs, soft: soft, hard: hard,
+                                   ansible: idn.stack.contains("ansible"), excludes: excludeGlobs(vibe))
         let census = walk.census
         let docs = await FileProbes.docs(abs, now: now)
 
@@ -230,6 +231,13 @@ struct FleetScanner: Sendable {
         guard let arch = vibe?["architecture"] as? [String: Any],
               let mx = arch["max_lines_per_file"] as? [String: Any] else { return (250, 400) }
         return (mx["soft"] as? Int ?? 250, mx["hard"] as? Int ?? 400)
+    }
+    /// The repo's `architecture.exclude_globs` — files matching these are out of
+    /// scope for the god-file census (shown for visibility, never graded).
+    private func excludeGlobs(_ vibe: [String: Any]?) -> [String] {
+        guard let arch = vibe?["architecture"] as? [String: Any],
+              let globs = arch["exclude_globs"] as? [String] else { return [] }
+        return globs.filter { !$0.isEmpty }
     }
     private func coverageFloor(_ vibe: [String: Any]?) -> Int? {
         ((vibe?["quality_gates"] as? [String: Any])?["coverage"] as? [String: Any])?["minimum_percentage"] as? Int

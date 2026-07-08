@@ -13,6 +13,17 @@ enum FileProbes {
     static func exists(_ path: String) -> Bool { fm.fileExists(atPath: path) }
     static func join(_ base: String, _ c: String) -> String { (base as NSString).appendingPathComponent(c) }
 
+    /// Fully-resolved canonical path. The file enumerator yields canonical URLs
+    /// (e.g. /private/var/… for a /var/… input), so we canonicalize the repo root
+    /// the same way before stripping it — otherwise a repo behind a symlink (or a
+    /// /var temp dir) leaves a mangled relative path. Returns the input unchanged
+    /// if it can't be resolved.
+    static func canonical(_ path: String) -> String {
+        guard let r = realpath(path, nil) else { return path }
+        defer { free(r) }
+        return String(cString: r)
+    }
+
     // ---- stack / identity ----
     struct Identity: Sendable { var stack = "unknown"; var framework = "—"; var pm = "—"; var lifecycle = "brownfield" }
 
@@ -58,31 +69,40 @@ enum FileProbes {
     // ---- line census + free hygiene facts (one walk, one read per file) ----
     struct WalkResult: Sendable { var census = Census(); var conflicts: [String] = []; var junk: [String] = [] }
 
-    static func walk(_ abs: String, soft: Int, hard: Int, ansible: Bool) -> WalkResult {
+    static func walk(_ abs: String, soft: Int, hard: Int, ansible: Bool, excludes: [String] = []) -> WalkResult {
         var w = WalkResult()
         var c = Census()
         var files: [FileLines] = []
         let exts = ansible ? Reference.codeExtensions.union(Reference.ansibleExtensions) : Reference.codeExtensions
-        guard let en = fm.enumerator(at: URL(fileURLWithPath: abs),
+        // Compile the repo's exclude_globs ONCE (not per-file) — a file matching any
+        // of them is out of architecture scope: shown for visibility, never graded.
+        let excludeMatchers = excludes.compactMap { Glob.compile($0) }
+        let base = canonical(abs)
+        guard let en = fm.enumerator(at: URL(fileURLWithPath: base),
                                      includingPropertiesForKeys: [.isDirectoryKey],
                                      options: [.skipsHiddenFiles]) else { w.census = c; return w }
         for case let url as URL in en {
             let name = url.lastPathComponent
             if skipDirs.contains(name) { en.skipDescendants(); continue }
-            let rel = url.path.replacingOccurrences(of: abs + "/", with: "")
+            let rel = url.path.replacingOccurrences(of: base + "/", with: "")
             if HygieneProbe.isJunkFile(name) { w.junk.append(rel) }
             guard exts.contains(url.pathExtension.lowercased()) else { continue }
             guard let data = try? Data(contentsOf: url) else { continue }
             let lines = data.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 } + 1
             c.scanned += 1
-            if lines > soft { c.softCount += 1 }
-            if lines > hard { c.godFiles.append(FileLines(path: rel, lines: lines)) }
+            let excluded = excludeMatchers.contains { Glob.matches(path: rel, regex: $0) }
+            if lines > soft && !excluded { c.softCount += 1 }
+            if lines > hard {
+                let fl = FileLines(path: rel, lines: lines, excluded: excluded)
+                if excluded { c.excludedGodFiles.append(fl) } else { c.godFiles.append(fl) }
+            }
             if HygieneProbe.hasConflictMarkers(data) { w.conflicts.append(rel) }
-            files.append(FileLines(path: rel, lines: lines))
+            files.append(FileLines(path: rel, lines: lines, excluded: excluded))
             if c.scanned > 5000 { break }   // safety cap
         }
         c.godFiles.sort { $0.lines > $1.lines }
-        c.largest = Array(files.sorted { $0.lines > $1.lines }.prefix(4))
+        c.excludedGodFiles.sort { $0.lines > $1.lines }
+        c.largest = Array(files.sorted { $0.lines > $1.lines }.prefix(8))
         w.census = c
         return w
     }

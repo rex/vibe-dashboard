@@ -12,11 +12,14 @@ enum Derive {
                       detail: hasMake ? "\(r.makefile.count) targets" : "no Makefile — gates cannot run"))
         g.append(Gate(name: "lint", command: "make lint", status: .skip, detail: hasMake ? "advisory" : "no Makefile"))
         g.append(Gate(name: "typecheck", command: "make typecheck", status: .skip, detail: hasMake ? "run to check" : "no Makefile"))
-        // Soft-limit files are IN POLICY (under hard) — never a gate warning.
+        // Soft-limit files are IN POLICY (under hard) — never a gate warning. Files
+        // matched by exclude_globs are out of scope entirely — not a god-file here.
         let arch: GateStatus = r.census.godFiles.isEmpty ? .ok : .fail
+        let excluded = r.census.excludedGodFiles.count
+        let exclNote = excluded > 0 ? " · \(excluded) excluded" : ""
         let archDetail = r.census.godFiles.isEmpty
-            ? (r.census.softCount > 0 ? "\(r.census.softCount) over soft · in policy" : "within limits")
-            : "\(r.census.godFiles.count) god-file\(r.census.godFiles.count == 1 ? "" : "s")"
+            ? (r.census.softCount > 0 ? "\(r.census.softCount) over soft · in policy" : "within limits") + exclNote
+            : "\(r.census.godFiles.count) god-file\(r.census.godFiles.count == 1 ? "" : "s")" + exclNote
         g.append(Gate(name: "architecture", command: "make check-architecture", status: arch, detail: archDetail))
         g.append(Gate(name: "tests", command: "make test", status: .skip, detail: "run to check"))
         if let cov = r.coverage, let floor = r.coverageFloor {

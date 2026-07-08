@@ -33,13 +33,15 @@ struct Worktree: Identifiable, Sendable, Hashable {
 struct FileLines: Identifiable, Sendable, Hashable {
     var path: String
     var lines: Int
+    var excluded: Bool = false   // matched by architecture.exclude_globs — shown, not graded
     var id: String { path }
 }
 
 struct Census: Sendable, Hashable {
     var scanned: Int = 0
     var softCount: Int = 0
-    var godFiles: [FileLines] = []
+    var godFiles: [FileLines] = []          // over hard AND in scope — these are graded
+    var excludedGodFiles: [FileLines] = []  // over hard but excluded via exclude_globs — shown, never graded
     var largest: [FileLines] = []
 }
 
