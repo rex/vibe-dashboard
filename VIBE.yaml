@@ -87,3 +87,6 @@ skills:
     version: "0.3.0"
     applied: 2026-07-01
     source: transcript-backfill
+  - id: "scaffold"
+    applied: "2026-07-01"
+    source: "transcript-backfill"

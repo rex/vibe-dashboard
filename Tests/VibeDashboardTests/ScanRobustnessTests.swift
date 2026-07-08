@@ -143,3 +143,32 @@ struct ParseWorktreesTests {
         #expect(!pairs.contains { $0.path == "/repo" })   // main worktree never listed
     }
 }
+
+/// A Finder/Xcode-launched GUI app inherits a Homebrew-less PATH, so `git -S` couldn't
+/// find `gpg` and EVERY signed commit failed ("cannot run gpg"). ProcessRunner.toolPath
+/// repairs the subprocess PATH — this pins that it always exposes the tool dirs, first.
+@Suite("subprocess PATH repair")
+struct ToolPathTests {
+    @Test("Homebrew + standard tool dirs are prepended so git can find gpg")
+    func prependsToolDirs() {
+        let path = ProcessRunner.toolPath("/usr/bin:/bin")   // the minimal GUI PATH
+        let dirs = path.split(separator: ":").map(String.init)
+        #expect(dirs.first == "/opt/homebrew/bin")             // Homebrew wins
+        #expect(dirs.contains("/opt/homebrew/bin"))            // where gpg + git actually live
+        #expect(dirs.contains("/usr/bin") && dirs.contains("/bin"))
+    }
+
+    @Test("inherited entries are preserved once, never duplicated")
+    func dedupesAndPreserves() {
+        let path = ProcessRunner.toolPath("/opt/homebrew/bin:/custom/tool/bin:/usr/bin")
+        let dirs = path.split(separator: ":").map(String.init)
+        #expect(dirs.filter { $0 == "/opt/homebrew/bin" }.count == 1)   // no duplicate
+        #expect(dirs.contains("/custom/tool/bin"))                       // a user's extra dir survives
+    }
+
+    @Test("a nil / empty inherited PATH still yields the tool dirs")
+    func handlesEmpty() {
+        #expect(ProcessRunner.toolPath(nil).contains("/opt/homebrew/bin"))
+        #expect(ProcessRunner.toolPath("").split(separator: ":").contains("/usr/bin"))
+    }
+}

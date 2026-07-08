@@ -62,6 +62,11 @@ enum ProcessRunner {
                 proc.arguments = args
                 if let cwd { proc.currentDirectoryURL = URL(fileURLWithPath: (cwd as NSString).expandingTildeInPath) }
                 var environment = ProcessInfo.processInfo.environment
+                // A GUI app launched from Finder/Xcode inherits a MINIMAL PATH
+                // (/usr/bin:/bin:…) that omits Homebrew — so `git -S` can't find its
+                // `gpg` child ("cannot run gpg: No such file or directory"), and make/
+                // xcodegen/etc. would fail the same way. Prepend the standard tool dirs.
+                environment["PATH"] = Self.toolPath(environment["PATH"])
                 environment["GIT_OPTIONAL_LOCKS"] = "0"
                 environment["GIT_TERMINAL_PROMPT"] = "0"
                 if let env { environment.merge(env) { _, new in new } }
@@ -119,6 +124,19 @@ enum ProcessRunner {
 
     private static let gitPaths = ["/opt/homebrew/bin/git", "/usr/bin/git", "/usr/local/bin/git"]
     static var gitPath: String { gitPaths.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/usr/bin/git" }
+
+    /// PATH for every subprocess: the standard CLI tool dirs (Homebrew first, so a
+    /// Homebrew git/gpg/make wins) prepended to whatever the app inherited, deduped in
+    /// order. Pure + testable. This is what lets a signed `git commit -S` find `gpg`,
+    /// and `make`/`xcodegen` find their tools, from a Finder/Xcode-launched GUI app.
+    static func toolPath(_ inherited: String?) -> String {
+        let toolDirs = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin",
+                        "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        let existing = (inherited ?? "").split(separator: ":").map(String.init)
+        var seen = Set<String>(); var out: [String] = []
+        for p in toolDirs + existing where !p.isEmpty && seen.insert(p).inserted { out.append(p) }
+        return out.joined(separator: ":")
+    }
 
     /// Convenience: run git in a repo.
     static func git(_ args: [String], cwd: String) async -> ProcessResult {
