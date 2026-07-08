@@ -26,7 +26,50 @@ enum AgentProbe {
         var measured: Bool = false    // did `git diff` run? distinguishes a real 0 from "unknown"
     }
 
-    static func sessions() async -> [Session] {
+    static var fm: FileManager { .default }
+
+    static func sessions(now: Date = Date()) async -> [Session] {
+        // PRIMARY — Claude Code appends a live transcript per session under
+        // ~/.claude/projects/<slug>/<sessionId>.jsonl. A transcript touched within the
+        // freshness window IS a live session, mapped to its repo by the transcript's real
+        // `cwd`. This is reliable no matter how the process is named in `ps` — modern
+        // Claude Code runs under node/SDK/headless wrappers whose basename ISN'T "claude",
+        // which the old ps-basename match missed entirely (the "live agents broken" bug).
+        var found = claudeTranscriptSessions(now: now)
+        var seen = Set(found.map { $0.cwd })
+        // SUPPLEMENT — ps for OTHER agent CLIs (codex/aider/gemini/opencode) that don't
+        // write to ~/.claude/projects. Deduped by cwd so it never double-counts a repo.
+        for s in await psSessions() where seen.insert(s.cwd).inserted { found.append(s) }
+        return found
+    }
+
+    /// Live Claude sessions from fresh transcript JSONLs. Synchronous bounded file IO.
+    static func claudeTranscriptSessions(now: Date, freshness: TimeInterval = 180) -> [Session] {
+        let root = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/projects")
+        guard let slugs = try? fm.contentsOfDirectory(atPath: root) else { return [] }
+        var best: [String: (mtime: Date, start: Date?)] = [:]   // cwd → freshest transcript
+        for slug in slugs {
+            let dir = (root as NSString).appendingPathComponent(slug)
+            guard let files = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+            for f in files where f.hasSuffix(".jsonl") {
+                let path = (dir as NSString).appendingPathComponent(f)
+                guard let attrs = try? fm.attributesOfItem(atPath: path),
+                      let mtime = attrs[.modificationDate] as? Date,
+                      now.timeIntervalSince(mtime) >= 0, now.timeIntervalSince(mtime) < freshness else { continue }
+                let head = fileHead(path)
+                guard let cwd = extractJSONString(head, key: "cwd"), !cwd.isEmpty else { continue }
+                if let existing = best[cwd], existing.mtime >= mtime { continue }
+                let start = extractJSONString(head, key: "timestamp").flatMap { ISO8601DateFormatter().date(from: $0) }
+                best[cwd] = (mtime, start)
+            }
+        }
+        return best.map { cwd, info in
+            Session(pid: 0, tool: "claude-code", cwd: cwd,
+                    elapsed: info.start.map { RelTime.compact(now.timeIntervalSince($0)) } ?? "live")
+        }
+    }
+
+    private static func psSessions() async -> [Session] {
         let ps = await ProcessRunner.run("/bin/ps", ["-axo", "pid=,etime=,command="])
         guard ps.ok else { return [] }
         var found: [Session] = []
@@ -36,11 +79,28 @@ enum AgentProbe {
             // "  pid  etime  command …" → [pid, etime, command]
             let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true).map(String.init)
             guard parts.count == 3, let pid = Int(parts[0]) else { continue }
-            guard let tool = matchTool(command: parts[2]) else { continue }
+            guard let tool = matchTool(command: parts[2]), tool != "claude-code" else { continue }
             guard let cwd = await cwd(of: pid), !cwd.isEmpty else { continue }
             found.append(Session(pid: pid, tool: tool, cwd: cwd, elapsed: humanize(parts[1])))
         }
         return found
+    }
+
+    /// First ~16KB of a file — the first JSONL line is small but transcripts can be huge.
+    private static func fileHead(_ path: String, bytes: Int = 16384) -> String {
+        guard let fh = FileHandle(forReadingAtPath: path) else { return "" }
+        defer { try? fh.close() }
+        let data = (try? fh.read(upToCount: bytes)) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Minimal `"key":"value"` extractor over a JSON text prefix (no full parse; these
+    /// values never contain an unescaped quote). Pure + testable.
+    static func extractJSONString(_ text: String, key: String) -> String? {
+        guard let r = text.range(of: "\"\(key)\":\"") else { return nil }
+        let rest = text[r.upperBound...]
+        guard let end = rest.firstIndex(of: "\"") else { return nil }
+        return String(rest[..<end])
     }
 
     /// Classify a process command line as a coding-agent CLI, or nil. Matches on the

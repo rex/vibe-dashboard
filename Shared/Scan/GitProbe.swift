@@ -44,13 +44,14 @@ enum GitProbe {
             f.worktree.unpushed = c
         }
 
-        // Signature across the last N commits (bounded — no full-history walk). Sampling
-        // only HEAD is false-pos/neg-prone under an all-commits-signed policy, so we mark
-        // signed only when EVERY recent commit carries a signature. No commit yet (or
-        // `log` fails) ⇒ indeterminate ⇒ keep the default (true) rather than inferring
-        // from config (which grades intent, not fact) or flagging a 0-commit repo.
-        if let out = await line(["log", "-20", "--format=%G?"], abs), let all = Self.allSigned(out) {
-            f.worktree.signed = all
+        // Signature (bounded — last N, no full-history walk). A repo counts as "signing"
+        // if its HEAD commit is signed OR recent history is predominantly signed. Requiring
+        // EVERY commit signed (the old rule) cried wolf on any repo carrying a single stray
+        // unsigned merge/import/bot commit — which is most real repos — flooding the fleet
+        // with false "unsigned commits" DANGER. No commit yet (or `log` fails) ⇒ keep the
+        // default (true): a 0-commit repo has nothing to be unsigned.
+        if let out = await line(["log", "-20", "--format=%G?"], abs) {
+            f.worktree.signed = Self.signedVerdict(out)
         }
 
         f.remotes = await remotes(abs, branch: f.branch)
@@ -65,17 +66,21 @@ enum GitProbe {
         return s.isEmpty ? nil : s
     }
 
-    /// Do ALL sampled commits carry a signature? `nil` when the sample is empty
-    /// (indeterminate — caller keeps its default). Pure + testable. `%G?` codes:
-    /// G/U/X/Y/R/E each mean a signature is present (valid, unknown-validity, expired,
-    /// expired-key, revoked, or uncheckable); `N` = none, `B` = bad — neither counts.
-    static func allSigned(_ log: String) -> Bool? {
+    /// Is this repo signing its commits? True if HEAD (the newest, `%G?`'s first line)
+    /// is signed, OR if the recent sample is majority-signed — tolerant of the odd
+    /// unsigned merge/import that would otherwise cry wolf, while still catching a repo
+    /// that genuinely isn't signing (e.g. all `N`). Empty sample ⇒ true (no commits to be
+    /// unsigned). Pure + testable. `%G?`: G/U/X/Y/R/E = a signature is present (valid,
+    /// unknown-validity, expired, expired-key, revoked, or uncheckable); `N`/`B` = none/bad.
+    static func signedVerdict(_ log: String) -> Bool {
         let present: Set<String> = ["G", "U", "X", "Y", "R", "E"]
         let codes = log.split(whereSeparator: { $0 == "\n" })
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        guard !codes.isEmpty else { return nil }
-        return codes.allSatisfy { present.contains($0) }
+        guard let head = codes.first else { return true }
+        if present.contains(head) { return true }              // HEAD signed ⇒ signing now
+        let signed = codes.filter { present.contains($0) }.count
+        return signed * 2 >= codes.count                       // majority signed ⇒ tolerate a stray unsigned HEAD
     }
 
     /// All remotes with a PER-REMOTE ahead count. Captures BOTH (fetch) and (push)

@@ -66,3 +66,22 @@ struct AgentProbeMatchTests {
         #expect(AgentProbe.matchTool(command: "./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient mcp") == nil)
     }
 }
+
+/// The live-session signal now comes from the transcript's real `cwd`, not `ps` — this
+/// is what makes detection work for node/SDK/headless Claude Code (the "broken" bug).
+@Suite("transcript cwd extraction")
+struct TranscriptCwdTests {
+    @Test("cwd is pulled from a real Claude Code transcript first line")
+    func extractsCwd() {
+        let head = #"{"type":"assistant","cwd":"/Users/dev/Code/__APPS/macOS/vibe-dashboard","sessionId":"abc","message":{"content":[]}}"#
+        #expect(AgentProbe.extractJSONString(head, key: "cwd") == "/Users/dev/Code/__APPS/macOS/vibe-dashboard")
+    }
+
+    @Test("timestamp is extractable; a missing key returns nil, not a crash")
+    func extractsTimestampAndMissing() {
+        let head = #"{"cwd":"/x/y","timestamp":"2026-07-08T05:50:56Z"}"#
+        #expect(AgentProbe.extractJSONString(head, key: "timestamp") == "2026-07-08T05:50:56Z")
+        #expect(AgentProbe.extractJSONString(head, key: "gitBranch") == nil)   // absent ⇒ nil
+        #expect(AgentProbe.extractJSONString("not json at all", key: "cwd") == nil)
+    }
+}

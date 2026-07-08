@@ -134,13 +134,16 @@ struct GradingSightTests {
 
     // MARK: Task 2 — signature samples the last N commits, not just HEAD
 
-    @Test("allSigned requires every sampled commit to be signed; an empty sample is indeterminate")
+    @Test("signedVerdict: HEAD-signed or majority-signed passes; only a genuinely-unsigned repo fails")
     func signedSampling() {
-        #expect(GitProbe.allSigned("G\nG\nG") == true)
-        #expect(GitProbe.allSigned("G\nN\nG") == false)   // one unsigned ⇒ not all-signed
-        #expect(GitProbe.allSigned("U\nX\nE") == true)     // present-but-unvalidated codes still count as signed
-        #expect(GitProbe.allSigned("N") == false)
-        #expect(GitProbe.allSigned("") == nil)             // no sample ⇒ don't know ⇒ caller keeps its default
+        #expect(GitProbe.signedVerdict("G\nG\nG") == true)
+        #expect(GitProbe.signedVerdict("G\nN\nG") == true)    // HEAD signed ⇒ signing now (the real-world false-positive case)
+        #expect(GitProbe.signedVerdict("G\nN\nN\nN") == true) // HEAD signed even if history is mostly unsigned
+        #expect(GitProbe.signedVerdict("N\nG\nG\nG") == true) // stray unsigned HEAD but majority signed ⇒ tolerated
+        #expect(GitProbe.signedVerdict("U\nX\nE") == true)    // present-but-unvalidated codes count as signed
+        #expect(GitProbe.signedVerdict("N\nN\nN") == false)   // genuinely not signing ⇒ flagged
+        #expect(GitProbe.signedVerdict("N\nN\nG") == false)   // unsigned HEAD + minority signed ⇒ flagged
+        #expect(GitProbe.signedVerdict("") == true)           // no commits ⇒ nothing to be unsigned
     }
 
     // MARK: Task 6 — git hooks get stub/missing classification + absolute hooksPath
