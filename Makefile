@@ -14,6 +14,17 @@ DEST_MAC   ?= 'platform=macOS,arch=arm64'
 # Version stamping — build-time injection so direct-Xcode and CI agree.
 BUILD_NUM := $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
 
+# Marketing version — single source of truth is VERSION (MAJOR.(MINOR_BASE +
+# commits-since-VERSION)). Computed by generate-build-info.sh and passed to
+# every xcodebuild build so the shipped CFBundleShortVersionString equals the
+# value BuildInfo.swift stamps — never the project.yml 0.1 placeholder.
+MARKETING_VERSION := $(shell ./Scripts/generate-build-info.sh --print-marketing 2>/dev/null || echo 0.0)
+
+# Reproducible SPM — the committed lockfile (Package.resolved) is restored into
+# the regenerated workspace so xcodebuild pins exact dependency versions.
+PKG_RESOLVED     := Package.resolved
+PKG_RESOLVED_DST := $(PROJECT)/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
 # Architecture gate thresholds (mirror VIBE.yaml).
 HARD_LINES ?= 400
 SOFT_LINES ?= 250
@@ -24,44 +35,69 @@ SOFT_LINES ?= 250
 help:
 	@printf "%s\n" \
 	  "Vibe Dashboard — targets:" \
+	  "  make setup              install git hooks (one-time, per checkout)" \
+	  "  make install-hooks      point git at .githooks (core.hooksPath)" \
 	  "  make regenerate         xcodegen generate the .xcodeproj" \
+	  "  make resolve            resolve + pin SPM deps (updates Package.resolved)" \
 	  "  make build-mac          build the macOS app (unsigned)" \
 	  "  make run                build + launch the app" \
 	  "  make test               run unit tests" \
 	  "  make lint               SwiftLint (advisory)" \
 	  "  make check-architecture file-size census (soft $(SOFT_LINES) / hard $(HARD_LINES))" \
 	  "  make check-docs         doc-size audit (AGENTS/CLAUDE/TASK_STATE)" \
-	  "  make validate           build + lint + architecture + docs — the gate" \
 	  "  make audit              privacy + usage-description + no-cocoapods gates" \
+	  "  make validate           build + test + lint + architecture + docs + audit — the gate" \
 	  "  make clean              clean derived data + regenerated project" \
 	  ""
+
+.PHONY: setup
+setup: install-hooks
+	@echo ">>> setup complete — run 'make validate' to check the gate"
+
+.PHONY: install-hooks
+install-hooks:
+	@git config core.hooksPath .githooks
+	@echo ">>> git hooks installed (core.hooksPath=.githooks)"
 
 .PHONY: regenerate
 regenerate:
 	$(XCODEGEN) generate
+	@if [ -f "$(PKG_RESOLVED)" ]; then \
+		mkdir -p "$(dir $(PKG_RESOLVED_DST))"; \
+		cp "$(PKG_RESOLVED)" "$(PKG_RESOLVED_DST)"; \
+		echo ">>> restored pinned $(PKG_RESOLVED) into workspace"; \
+	fi
 
 .PHONY: resolve
 resolve: regenerate
 	$(XCODEBUILD) -project $(PROJECT) -scheme $(SCHEME_MAC) -resolvePackageDependencies
+	@if [ -f "$(PKG_RESOLVED_DST)" ]; then \
+		cp "$(PKG_RESOLVED_DST)" "$(PKG_RESOLVED)"; \
+		echo ">>> updated $(PKG_RESOLVED) from resolution — commit it to pin"; \
+	fi
 
 .PHONY: build-mac
 build-mac: regenerate
 	$(XCODEBUILD) -project $(PROJECT) -scheme $(SCHEME_MAC) -destination $(DEST_MAC) \
 		CODE_SIGNING_ALLOWED=NO \
-		CURRENT_PROJECT_VERSION=$(BUILD_NUM) build
+		CURRENT_PROJECT_VERSION=$(BUILD_NUM) \
+		MARKETING_VERSION=$(MARKETING_VERSION) build
 
 .PHONY: run
 run: build-mac
 	@APP="$$($(XCODEBUILD) -project $(PROJECT) -scheme $(SCHEME_MAC) -destination $(DEST_MAC) \
+		MARKETING_VERSION=$(MARKETING_VERSION) \
 		-showBuildSettings 2>/dev/null | awk '/ BUILT_PRODUCTS_DIR/ {d=$$3} / FULL_PRODUCT_NAME/ {n=$$3} END {print d"/"n}')"; \
 	echo ">>> launching $$APP"; open "$$APP"
 
 .PHONY: test
 test: regenerate
+	rm -rf build/test-results.xcresult   # xcodebuild refuses to overwrite an existing result bundle
 	$(XCODEBUILD) test -project $(PROJECT) -scheme $(SCHEME_MAC) -destination $(DEST_MAC) \
 		CODE_SIGNING_ALLOWED=NO \
 		-resultBundlePath build/test-results.xcresult \
-		CURRENT_PROJECT_VERSION=$(BUILD_NUM)
+		CURRENT_PROJECT_VERSION=$(BUILD_NUM) \
+		MARKETING_VERSION=$(MARKETING_VERSION)
 
 .PHONY: lint
 lint:
@@ -92,13 +128,21 @@ check-docs:
 	echo ">>> docs: ok"
 
 .PHONY: validate
-validate: build-mac lint check-architecture check-docs
-	@echo ">>> validate: all gates green"
+validate: build-mac test lint check-architecture check-docs audit
+	@echo ">>> validate: all gates green (build · test · lint · architecture · docs · audit)"
 
 .PHONY: audit
 audit:
-	@./Scripts/audit-privacy-manifest.sh 2>/dev/null || echo "audit-privacy-manifest.sh missing"
-	@./Scripts/check-no-cocoapods.sh 2>/dev/null || echo "check-no-cocoapods.sh missing"
+	@echo ">>> audit: privacy manifest · usage descriptions · no-cocoapods"
+	@for s in audit-privacy-manifest audit-usage-descriptions check-no-cocoapods; do \
+		if [ -x "./Scripts/$$s.sh" ]; then \
+			echo "--- $$s ---"; \
+			"./Scripts/$$s.sh"; \
+		else \
+			echo "MISSING gate script: Scripts/$$s.sh" >&2; exit 1; \
+		fi; \
+	done
+	@echo ">>> audit: all gates passed"
 
 .PHONY: clean
 clean:

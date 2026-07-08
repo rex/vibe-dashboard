@@ -8,6 +8,7 @@
 // the final write is atomic. If anything is off, the original is left untouched.
 
 import Foundation
+import CryptoKit
 import Yams
 
 enum VibeYamlEditor {
@@ -92,10 +93,10 @@ enum VibeYamlEditor {
         let normalized = usesCRLF ? original.replacingOccurrences(of: "\r\n", with: "\n") : original
         var lines = normalized.components(separatedBy: "\n")
 
-        var entry = ["  - id: \(id)"]
-        if let version { entry.append("    version: \"\(version)\"") }
-        entry.append("    applied: \(applied)")
-        entry.append("    source: transcript-backfill")
+        var entry = ["  - id: \(yamlQuoted(id))"]
+        if let version { entry.append("    version: \(yamlQuoted(version))") }
+        entry.append("    applied: \(yamlQuoted(applied))")
+        entry.append("    source: \"transcript-backfill\"")
 
         if let skIdx = lines.firstIndex(where: { isTopKey($0, "skills") }) {
             let after = inlineValue(lines[skIdx])
@@ -104,8 +105,7 @@ enum VibeYamlEditor {
             }
             var blockEnd = lines.count
             for i in (skIdx + 1)..<lines.count where isTopKeyLine(lines[i]) { blockEnd = i; break }
-            var insertAt = skIdx + 1
-            for i in (skIdx + 1)..<blockEnd where isListItemLine(lines[i]) || indentOf(lines[i]) > 0 { insertAt = i + 1 }
+            let insertAt = lastListMemberEnd(lines, start: skIdx + 1, blockEnd: blockEnd)
             lines.insert(contentsOf: entry, at: insertAt)
         } else {
             while lines.last?.isEmpty == true { lines.removeLast() }
@@ -140,8 +140,14 @@ enum VibeYamlEditor {
         let dir = (NSHomeDirectory() as NSString)
             .appendingPathComponent("Library/Application Support/VibeDashboard/backups")
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        let slug = vibePath.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: " ", with: "_")
-        return (dir as NSString).appendingPathComponent(slug + ".bak")
+        // A collision-FREE key: SHA256 of the absolute path. The old '/'/' '→'_'
+        // slug could collide (…/a b/… and …/a_b/… mapped to one file), letting one
+        // repo's backup clobber another's. SHA256 is fixed-length (a safe filename)
+        // and deterministic — the same path always maps to the same backup, which
+        // both the write path and the tests rely on.
+        let abs = (vibePath as NSString).expandingTildeInPath
+        let hex = SHA256.hash(data: Data(abs.utf8)).map { String(format: "%02x", $0) }.joined()
+        return (dir as NSString).appendingPathComponent(hex + ".bak")
     }
 
     /// The globs currently excluded (for showing the user before/after).
@@ -162,6 +168,34 @@ enum VibeYamlEditor {
 
     // ---- line helpers (indentation-aware, comment/format preserving) ----
     private static func indentOf(_ line: String) -> Int { line.prefix { $0 == " " }.count }
+
+    /// Double-quote a scalar for safe YAML emission (escaping \ then "). Quoting
+    /// ALL string scalars — not just version — stops a widened/odd input (a
+    /// date-like or numeric-looking id or applied value) from parsing as a
+    /// non-string type. The re-parse-verify still guards; this removes the
+    /// ambiguity at the source.
+    private static func yamlQuoted(_ s: String) -> String {
+        let escaped = s.replacingOccurrences(of: "\\", with: "\\\\")
+                       .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
+    /// Index just after the last line genuinely part of a block's list, found by
+    /// walking BACKWARD from blockEnd so a trailing blank or comment (even an
+    /// indented one) can't push a new entry outside the list. The skills: block's
+    /// weak case is being the file's LAST top-level block (blockEnd == lines.count),
+    /// where a forward scan would stop at — or step past — end-of-file cruft.
+    private static func lastListMemberEnd(_ lines: [String], start: Int, blockEnd: Int) -> Int {
+        var end = min(blockEnd, lines.count)
+        while end > start {
+            let line = lines[end - 1]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { end -= 1; continue }   // trailing blank/comment
+            if isListItemLine(line) || indentOf(line) > 0 { return end }          // last real list line
+            end -= 1
+        }
+        return end
+    }
 
     private static func isTopKey(_ line: String, _ name: String) -> Bool {
         line.range(of: "^\(name)[ \\t]*:", options: .regularExpression) != nil

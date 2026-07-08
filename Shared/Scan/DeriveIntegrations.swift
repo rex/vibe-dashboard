@@ -1,6 +1,7 @@
 // DeriveIntegrations.swift — Makefile / SCM / CI / containers / skills / build.
 
 import Foundation
+import Yams
 
 enum DeriveIntegrations {
     static var fm: FileManager { .default }
@@ -75,18 +76,97 @@ enum DeriveIntegrations {
         }
         let provider = dir == gh ? "github-actions" : "gitea-actions"
         let workflows = files.filter { $0.hasSuffix(".yml") || $0.hasSuffix(".yaml") }
-            .map { CiWorkflow(name: $0, trigger: "push · pull_request", status: .skip, last: "—") }
-        return CiInfo(provider: provider, configured: true, workflows: workflows, grade: "B",
-                      notes: [Note(tone: .ok, text: "\(provider) · \(workflows.count) workflow(s)")])
+            .sorted()
+            .map { CiWorkflow(name: $0, trigger: workflowTrigger(join(dir, $0)), status: .skip, last: "—") }
+        // Triggers are read straight from each workflow's `on:` block, but we never
+        // query the provider for run results — so there is no pass/fail to grade and
+        // no last-run to show. Report the configuration and leave both unassessed
+        // rather than invent a grade or a green "ok".
+        return CiInfo(provider: provider, configured: true, workflows: workflows, grade: "n/a",
+                      notes: [Note(tone: .neutral, text: "\(provider) · \(workflows.count) workflow(s) · run status not checked")])
+    }
+
+    /// The real trigger string for one workflow file, parsed from its `on:` block.
+    /// Honest by construction: any read/parse failure — or a missing `on:` — yields
+    /// "—" (unknown), NEVER a fabricated default. Note the YAML 1.1 footgun: a bare
+    /// `on:` key resolves to Bool(`true`), so we look it up under both spellings.
+    static func workflowTrigger(_ path: String) -> String {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8),
+              let raw = try? Yams.load(yaml: text),
+              let top = raw as? [AnyHashable: Any] else { return "—" }
+        let onValue = top.first { entry in
+            if let k = entry.key.base as? String { return k == "on" }
+            if let b = entry.key.base as? Bool { return b == true }
+            return false
+        }?.value
+        let events = triggerEvents(from: onValue)
+        return events.isEmpty ? "—" : events.joined(separator: " · ")
+    }
+
+    /// Event names from an `on:` value — scalar (`push`), sequence
+    /// (`[push, pull_request]`), or mapping (`push: … / schedule: …`) — de-duped and
+    /// sorted into a stable canonical order (map keys arrive unordered).
+    static func triggerEvents(from value: Any?) -> [String] {
+        guard let value else { return [] }
+        var names: [String] = []
+        if let s = value as? String {
+            names = [s]
+        } else if let arr = value as? [Any] {
+            names = arr.compactMap { $0 as? String }
+        } else if let map = value as? [AnyHashable: Any] {
+            names = map.keys.compactMap { $0.base as? String }
+        } else {
+            return []
+        }
+        let cleaned = names.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        var seen = Set<String>()
+        return cleaned.filter { seen.insert($0).inserted }.sorted(by: triggerBefore)
+    }
+
+    private static let triggerOrder = [
+        "push", "pull_request", "pull_request_target", "workflow_dispatch",
+        "schedule", "release", "workflow_call", "workflow_run", "merge_group",
+    ]
+    /// Known events sort by `triggerOrder`; unknowns follow, alphabetically.
+    private static func triggerBefore(_ a: String, _ b: String) -> Bool {
+        switch (triggerOrder.firstIndex(of: a), triggerOrder.firstIndex(of: b)) {
+        case let (x?, y?): return x < y
+        case (_?, nil): return true
+        case (nil, _?): return false
+        case (nil, nil): return a < b
+        }
     }
 
     static func containers(_ abs: String) -> Containers {
-        let dockerfile = join(abs, "Dockerfile")
-        guard exists(dockerfile) else {
+        let hasDockerfile = exists(join(abs, "Dockerfile"))
+        let composePath = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]
+            .map { join(abs, $0) }.first(where: exists)
+        guard hasDockerfile || composePath != nil else {
             return Containers(configured: false, items: [], grade: "n/a",
                               notes: [Note(tone: .neutral, text: "no container build")])
         }
-        let body = (try? String(contentsOfFile: dockerfile, encoding: .utf8)) ?? ""
+        var items: [ContainerItem] = []
+        var notes: [Note] = []
+        if hasDockerfile {
+            let item = dockerfileItem(abs)
+            items.append(item)
+            notes += item.checks.filter { !$0.ok }.map { Note(tone: .warn, text: "Dockerfile: \($0.text)") }
+        }
+        if let composePath {
+            let item = composeItem(composePath)
+            items.append(item)
+            notes += item.checks.filter { !$0.ok }.map { Note(tone: .warn, text: "compose: \($0.text)") }
+            if item.grade == "n/a" { notes.append(Note(tone: .neutral, text: "compose: present · not assessed")) }
+        }
+        if notes.isEmpty {
+            notes = [Note(tone: .ok, text: hasDockerfile ? "pinned, non-root, healthchecked" : "compose checks passed")]
+        }
+        return Containers(configured: true, items: items, grade: worstGrade(items.map(\.grade)), notes: notes)
+    }
+
+    /// Dockerfile checks — all read from the file, all real.
+    private static func dockerfileItem(_ abs: String) -> ContainerItem {
+        let body = (try? String(contentsOfFile: join(abs, "Dockerfile"), encoding: .utf8)) ?? ""
         let pinned = !body.contains(":latest") && body.contains("FROM")
         let nonroot = body.contains("USER ")
         let health = body.contains("HEALTHCHECK")
@@ -97,17 +177,64 @@ enum DeriveIntegrations {
             CheckItem(ok: ignore, text: ignore ? ".dockerignore present" : "no .dockerignore"),
             CheckItem(ok: health, text: health ? "HEALTHCHECK defined" : "no HEALTHCHECK"),
         ]
-        let fails = checks.filter { !$0.ok }.count
-        let grade = fails == 0 ? "A" : fails == 1 ? "B" : fails == 2 ? "C" : "D"
-        let item = ContainerItem(kind: "dockerfile", path: "Dockerfile", checks: checks, grade: grade)
-        var items = [item]
-        if exists(join(abs, "docker-compose.yml")) || exists(join(abs, "compose.yml")) {
-            items.append(ContainerItem(kind: "compose", path: "docker-compose.yml",
-                checks: [CheckItem(ok: true, text: "compose file present")], grade: "B"))
+        return ContainerItem(kind: "dockerfile", path: "Dockerfile",
+                             checks: checks, grade: letterGrade(fails: checks.filter { !$0.ok }.count))
+    }
+
+    /// Compose checks derived from the file's own `services:` — image-tag pinning,
+    /// restart policy, healthcheck. Unparsable or service-less → an honest "n/a" item
+    /// with no invented checks and no letter grade (never the old canned "B").
+    static func composeItem(_ path: String) -> ContainerItem {
+        let rel = (path as NSString).lastPathComponent
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8),
+              let root = (try? Yams.load(yaml: text)) as? [AnyHashable: Any],
+              let services = root["services"] as? [AnyHashable: Any], !services.isEmpty else {
+            return ContainerItem(kind: "compose", path: rel, checks: [], grade: "n/a")
         }
-        let notes = checks.filter { !$0.ok }.map { Note(tone: .warn, text: "Dockerfile: \($0.text)") }
-        return Containers(configured: true, items: items, grade: grade,
-                          notes: notes.isEmpty ? [Note(tone: .ok, text: "pinned, non-root, healthchecked")] : notes)
+        var images: [String] = []
+        var anyRestart = false
+        var anyHealthcheck = false
+        for raw in services.values {
+            guard let svc = raw as? [AnyHashable: Any] else { continue }
+            if let image = svc["image"] as? String { images.append(image) }
+            // `restart: "no"` (or unquoted `no` → YAML false) IS the no-restart
+            // default, so a bare presence check would over-credit; require a real policy.
+            if let restart = svc["restart"] as? String,
+               !["", "no"].contains(restart.lowercased()) { anyRestart = true }
+            // `healthcheck: {disable: true}` explicitly turns the check off — don't count it.
+            if let hc = svc["healthcheck"] as? [AnyHashable: Any],
+               (hc["disable"] as? Bool) != true { anyHealthcheck = true }
+        }
+        var checks: [CheckItem] = []
+        if !images.isEmpty {           // only meaningful when a service pulls an image
+            let unpinned = images.filter(imageIsUnpinned)
+            checks.append(CheckItem(ok: unpinned.isEmpty,
+                text: unpinned.isEmpty ? "image tags pinned" : "unpinned image: \(unpinned[0])"))
+        }
+        checks.append(CheckItem(ok: anyRestart, text: anyRestart ? "restart policy set" : "no restart policy"))
+        checks.append(CheckItem(ok: anyHealthcheck, text: anyHealthcheck ? "healthcheck defined" : "no healthcheck"))
+        return ContainerItem(kind: "compose", path: rel,
+                             checks: checks, grade: letterGrade(fails: checks.filter { !$0.ok }.count))
+    }
+
+    /// An image ref is unpinned if it has no tag or an explicit `:latest`
+    /// (`@sha256:…` digests count as pinned; a registry `host:port/` is not a tag).
+    private static func imageIsUnpinned(_ image: String) -> Bool {
+        if image.contains("@sha256:") { return false }
+        let namePart = image.lastIndex(of: "/").map { String(image[image.index(after: $0)...]) } ?? image
+        guard let colon = namePart.lastIndex(of: ":") else { return true }
+        let tag = namePart[namePart.index(after: colon)...]
+        return tag.isEmpty || tag == "latest"
+    }
+
+    private static func letterGrade(fails: Int) -> String {
+        fails == 0 ? "A" : fails == 1 ? "B" : fails == 2 ? "C" : "D"
+    }
+
+    /// Worst (red-most) letter among gradable items; non-letters ("n/a") ignored.
+    /// Lexically A<B<C<D<F, so `max` is the worst; nothing gradable → "n/a".
+    private static func worstGrade(_ grades: [String]) -> String {
+        grades.filter { ["A", "B", "C", "D", "F"].contains($0) }.max() ?? "n/a"
     }
 
     // Skills are reported ONLY from real provenance — NEVER inferred from code.
@@ -149,7 +276,10 @@ enum DeriveIntegrations {
     static func build(_ abs: String, git: GitFacts) -> RepoBuild {
         var version = "v0.1.0"
         if let v = try? String(contentsOfFile: join(abs, "VERSION"), encoding: .utf8) {
-            if let sem = v.split(separator: "\n").first(where: { $0.range(of: "^[0-9]+\\.[0-9]+\\.[0-9]+$", options: .regularExpression) != nil }) {
+            let semverLine = v.split(separator: "\n").first {
+                $0.range(of: "^[0-9]+\\.[0-9]+\\.[0-9]+$", options: .regularExpression) != nil
+            }
+            if let sem = semverLine {
                 version = "v" + sem.trimmingCharacters(in: .whitespaces)
             } else if let major = value(in: v, key: "MAJOR"), let minor = value(in: v, key: "MINOR_BASE") {
                 version = "v\(major).\(minor).0"

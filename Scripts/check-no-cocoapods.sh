@@ -19,8 +19,12 @@ forbid() {
     local name="$1"
     local pattern="$2"
     local found
+    # Prune the xcodegen-generated `.xcodeproj`: its nested
+    # `project.xcworkspace` is NOT a CocoaPods artifact and must not trip
+    # this check. `|| true` keeps SIGPIPE from `head` from aborting `set -e`.
     found=$(find . -path "*/.git" -prune -o -path "*/build" -prune -o \
-        -name "$pattern" -print 2>/dev/null | head -5)
+        -path "*.xcodeproj" -prune -o \
+        -name "$pattern" -print 2>/dev/null | head -5 || true)
     if [[ -n "$found" ]]; then
         red "✗ $name detected:"
         printf '%s\n' "$found" >&2
@@ -36,14 +40,15 @@ forbid "Carthage Cartfile" "Cartfile"
 forbid "Carthage Cartfile.resolved" "Cartfile.resolved"
 forbid "Carthage Build dir" "Carthage"
 
-# `.xcworkspace` is not banned outright (xcodegen generates one), but
-# coupled with a Podfile it's a CocoaPods workspace. The check above
-# is intentionally over-broad — manual review when it trips.
+# A standalone `<App>.xcworkspace` alongside a Podfile is a CocoaPods
+# workspace and IS caught above. The `project.xcworkspace` nested inside
+# the xcodegen-generated `.xcodeproj` is benign — `.xcodeproj` is pruned
+# in forbid(), so a fresh `xcodegen generate` never trips this check.
 
 if [[ $failures -gt 0 ]]; then
     red "✗ Forbidden dependency manager artifacts found ($failures kinds)."
-    yellow "Migrate to Swift Package Manager (declare in project.yml::packages)."
-    yellow "See AGENTS.md for the policy and references/project-layout.md for SPM examples."
+    yellow "Migrate to Swift Package Manager (declare deps under packages: in project.yml)."
+    yellow "See AGENTS.md for the SPM-only policy."
     exit 1
 fi
 

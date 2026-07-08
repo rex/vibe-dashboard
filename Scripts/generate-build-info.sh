@@ -16,10 +16,13 @@
 #   $SRCROOT                 (Xcode-passed; else script-relative)
 #
 # Outputs:
-#   ${SRCROOT}/MyApp/Generated/BuildInfo.swift
+#   ${SRCROOT}/VibeDashboard/Generated/BuildInfo.swift
 #
-# Copy into your project root as `Scripts/generate-build-info.sh`
-# and reference from project.yml.
+# Modes:
+#   (no args)          write Generated/BuildInfo.swift (the pre-build path).
+#   --print-marketing  print the computed MARKETING_VERSION and exit — the
+#                      Makefile reads this to stamp the shipped app bundle so
+#                      CFBundleShortVersionString matches BuildInfo.
 
 set -euo pipefail
 
@@ -44,6 +47,13 @@ if [[ -f VERSION ]]; then
     MARKETING="${VERSION_MAJOR}.$(( VERSION_MINOR_BASE + MINOR_DELTA ))"
 else
     MARKETING="${MARKETING_VERSION:-1.0}"
+fi
+
+# --print-marketing: emit the computed version and stop. The Makefile calls
+# this so the shipped CFBundleShortVersionString equals BuildInfo's version.
+if [[ "${1:-}" == "--print-marketing" ]]; then
+    printf '%s\n' "$MARKETING"
+    exit 0
 fi
 
 # Build number from env (Xcode/Make pass it) or git.
@@ -74,9 +84,9 @@ fi
 BUILD_DATE_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Find the main app source directory. Convention: the directory next
-# to project.yml with the matching app name (e.g. `MyApp/`). Override
+# to project.yml with the matching app name (`VibeDashboard/`). Override
 # with $BUILDINFO_APP_DIR if your layout differs.
-APP_DIR="${BUILDINFO_APP_DIR:-MyApp}"
+APP_DIR="${BUILDINFO_APP_DIR:-VibeDashboard}"
 OUT_DIR="$SRC/$APP_DIR/Generated"
 OUT_FILE="$OUT_DIR/BuildInfo.swift"
 mkdir -p "$OUT_DIR"

@@ -29,7 +29,7 @@ mapfile -t manifests < <(find . -name "PrivacyInfo.xcprivacy" -not -path "*/buil
 
 if [[ ${#manifests[@]} -eq 0 ]]; then
     red "✗ No PrivacyInfo.xcprivacy found. REQUIRED for App Store submission since May 2024."
-    yellow "  Copy templates/PrivacyInfo.xcprivacy to your app target root."
+    yellow "  Add VibeDashboard/PrivacyInfo.xcprivacy and list it under targets.VibeDashboard.sources in project.yml."
     exit 1
 fi
 
@@ -83,9 +83,11 @@ for category in "${!api_patterns[@]}"; do
     pattern="${api_patterns[$category]}"
 
     # Search Swift / Obj-C source for the API usage.
+    # `|| true`: a zero-match grep exits 1, which under `set -o pipefail`
+    # would abort the whole script mid-audit. We WANT zero matches here.
     matches=$(grep -rE "$pattern" --include="*.swift" --include="*.m" --include="*.mm" \
         --exclude-dir=build --exclude-dir=.git --exclude-dir=Pods --exclude-dir=Carthage \
-        2>/dev/null | wc -l | tr -d ' ')
+        2>/dev/null | wc -l | tr -d ' ' || true)
 
     if [[ $matches -gt 0 ]]; then
         if grep -q "$category" <<< "$all_categories"; then
@@ -101,7 +103,7 @@ done
 echo
 if [[ $failures -gt 0 ]]; then
     red "✗ $failures privacy-manifest issue(s) found."
-    yellow "See references/compliance.md for the canonical guide."
+    yellow "Fix VibeDashboard/PrivacyInfo.xcprivacy (the apple: privacy_manifest policy in VIBE.yaml requires it)."
     exit 1
 else
     green "✓ Privacy manifest audit passed."

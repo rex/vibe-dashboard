@@ -10,7 +10,10 @@ settingGroups:
     SWIFT_VERSION: '6.0'
     SWIFT_STRICT_CONCURRENCY: complete
     CODE_SIGN_STYLE: Automatic
-    # Placeholders — overridden by Scripts/generate-build-info.sh at build time.
+    # Fallback literals only. `make` (build-mac/run/test) passes the real
+    # CURRENT_PROJECT_VERSION (git commit count) and MARKETING_VERSION
+    # (computed from VERSION) to xcodebuild, so the shipped bundle never
+    # uses these. A bare `xcodebuild` / Xcode ⌘R build falls back to them.
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1
 

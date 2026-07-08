@@ -53,9 +53,11 @@ declare -A api_to_key=(
 for pattern in "${!api_to_key[@]}"; do
     key="${api_to_key[$pattern]}"
 
+    # `|| true`: a zero-match grep exits 1, which under `set -o pipefail`
+    # would abort the whole audit. Zero matches is the expected case.
     src_hits=$(grep -rE "\b$pattern\b" --include="*.swift" --include="*.m" --include="*.mm" \
         --exclude-dir=build --exclude-dir=.git --exclude-dir=Pods --exclude-dir=Carthage \
-        --exclude-dir=DerivedData 2>/dev/null | wc -l | tr -d ' ')
+        --exclude-dir=DerivedData 2>/dev/null | wc -l | tr -d ' ' || true)
 
     if [[ $src_hits -gt 0 ]]; then
         # Pattern in source — check at least ONE Info.plist declares the key.
@@ -98,7 +100,7 @@ done
 echo
 if [[ $failures -gt 0 ]]; then
     red "✗ $failures usage-description issue(s) found."
-    yellow "See references/compliance.md for the API → key mapping."
+    yellow "Add the matching NS…UsageDescription key to VibeDashboard/Info.plist."
     exit 1
 else
     green "✓ Usage descriptions audit passed."

@@ -22,6 +22,8 @@ struct BackfillSheet: View {
     @Environment(FleetStore.self) private var store
     @State private var evidence: [SkillEvidence] = []
     @State private var loading = true
+    @State private var unparsed = 0                     // Skill lines that matched but wouldn't parse
+    @State private var agentsViewError: String?   // non-nil ⇒ AgentsView query/DB error
     @State private var done: Set<String> = []   // "evidenceId|repoId" recorded this session
 
     private func recordedNow(_ repo: Repo, _ e: SkillEvidence) -> Bool {
@@ -29,18 +31,23 @@ struct BackfillSheet: View {
     }
 
     /// Split evidence into one-click exact matches and workspace-root groups.
+    /// BOTH the evidence cwd and each repo's absolutePath are normalized (tilde,
+    /// symlink, trailing slash) before comparison — a raw string compare drops a
+    /// `~/Code/foo`, `/Users/…/foo/`, or `/private`-symlinked cwd as non-managed,
+    /// hiding real applied-skill evidence from the backfill entirely.
     private func classify() -> (exacts: [ExactMatch], groups: [WSGroup]) {
-        let leaves = store.fleet.leaves
+        let normLeaves = store.fleet.leaves.map { (repo: $0, norm: TranscriptProbe.normalizedPath($0.absolutePath)) }
         var exacts: [ExactMatch] = []
         var groups: [WSGroup] = []
         for e in evidence.sorted(by: { $0.repoPath < $1.repoPath }) {
-            if let leaf = leaves.first(where: { $0.absolutePath == e.repoPath }) {
+            let repoN = TranscriptProbe.normalizedPath(e.repoPath)
+            if let leaf = normLeaves.first(where: { $0.norm == repoN })?.repo {
                 if !recordedNow(leaf, e) { exacts.append(ExactMatch(ev: e, repo: leaf)) }
             } else {
-                let kids = leaves.filter { $0.absolutePath.hasPrefix(e.repoPath + "/") && !recordedNow($0, e) }
+                let kids = normLeaves.filter { $0.norm.hasPrefix(repoN + "/") && !recordedNow($0.repo, e) }.map { $0.repo }
                 if !kids.isEmpty {
-                    let label = store.fleet.workspaces.first { $0.absolutePath == e.repoPath }?.name
-                        ?? (e.repoPath as NSString).lastPathComponent
+                    let label = store.fleet.workspaces.first { TranscriptProbe.normalizedPath($0.absolutePath) == repoN }?.name
+                        ?? (repoN as NSString).lastPathComponent
                     groups.append(WSGroup(ev: e, label: label, children: kids))
                 }
             }
@@ -48,9 +55,10 @@ struct BackfillSheet: View {
         return (exacts, groups)
     }
     private var ambiguous: Int {
-        let leaves = store.fleet.leaves
+        let normLeaves = store.fleet.leaves.map { TranscriptProbe.normalizedPath($0.absolutePath) }
         return evidence.filter { e in
-            !leaves.contains { $0.absolutePath == e.repoPath || $0.absolutePath.hasPrefix(e.repoPath + "/") }
+            let repoN = TranscriptProbe.normalizedPath(e.repoPath)
+            return !normLeaves.contains { $0 == repoN || $0.hasPrefix(repoN + "/") }
         }.count
     }
     private func versionSuffix(_ id: String) -> String {
@@ -73,7 +81,8 @@ struct BackfillSheet: View {
             app.closeSheet()
         } content: {
             VStack(alignment: .leading, spacing: Theme.space.x3) {
-                SheetProse(text: "where a /lang- or /tool- skill was actually RUN (on-disk transcripts + AgentsView). "
+                SheetProse(text: "where a skeleton skill (/lang-, /tool-, /agentic-, scaffold, retrofit) "
+                    + "was actually RUN (on-disk transcripts + AgentsView). "
                     + "exact repo matches are one-click; a skill run from a workspace root lets you pick the child repo(s) that got it. "
                     + "each records a verified, backed-up entry into that repo's VIBE.yaml skills:.")
                 if loading {
@@ -103,10 +112,21 @@ struct BackfillSheet: View {
                     Text("\(ambiguous) event(s) at non-managed paths skipped.")
                         .font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textFaint)
                 }
+                if unparsed > 0 {
+                    Text("\(unparsed) transcript line(s) matched but couldn't be parsed — possible schema drift.")
+                        .font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textFaint)
+                }
+                if let agentsViewError {
+                    Text("AgentsView index unavailable: \(agentsViewError)")
+                        .font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textMuted).lineLimit(2)
+                }
             }
         }
         .task {
-            evidence = await TranscriptProbe.scan()
+            let result = await TranscriptProbe.scan()
+            evidence = result.evidence
+            unparsed = result.unparsedSkillLines
+            agentsViewError = result.agentsViewError
             loading = false
         }
     }
