@@ -130,7 +130,10 @@ private struct SidebarRow: View {
                 if repo.isWorkspace {
                     VibeIcon("folder-tree", size: 14, color: selected ? Theme.color.accent : Theme.color.textMuted)
                 } else {
-                    LangGlyph(stack: repo.stack, size: 18, health: repo.health)
+                    // The repo's own resolved icon (app-icon/favicon), matching the Fleet
+                    // rows; RepoLogoThumb falls back to the stack glyph when none is found.
+                    // `live: false` — the row's AgentPulse already carries the live signal.
+                    RepoLogoThumb(repo: repo, size: 18, live: false)
                 }
             }
             .overlay(alignment: .bottomTrailing) {

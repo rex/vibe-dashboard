@@ -30,18 +30,19 @@ func drawIcon(_ px: Int) -> CGImage {
     ctx.addPath(squircle); ctx.setFillColor(ink); ctx.fillPath()
     ctx.addPath(squircle); ctx.setStrokeColor(limeFaint); ctx.setLineWidth(s * 0.006); ctx.strokePath()
 
-    // The mark: a big "v" + a terminal cursor block, optically centered.
+    // The mark: a "v" + a terminal cursor block, optically centered with generous
+    // padding — the ORIGINAL smaller-font "V|", not the space-filling enlarged one.
     ctx.setLineCap(.round); ctx.setLineJoin(.round)
-    ctx.setStrokeColor(lime); ctx.setLineWidth(s * 0.12)
+    ctx.setStrokeColor(lime); ctx.setLineWidth(s * 0.078)
     ctx.beginPath()
-    ctx.move(to: CGPoint(x: s * 0.20, y: y(s * 0.28)))
-    ctx.addLine(to: CGPoint(x: s * 0.42, y: y(s * 0.72)))
-    ctx.addLine(to: CGPoint(x: s * 0.64, y: y(s * 0.28)))
+    ctx.move(to: CGPoint(x: s * 0.315, y: y(s * 0.36)))
+    ctx.addLine(to: CGPoint(x: s * 0.45, y: y(s * 0.64)))
+    ctx.addLine(to: CGPoint(x: s * 0.585, y: y(s * 0.36)))
     ctx.strokePath()
 
-    let bx = s * 0.68, bw = s * 0.12, bTop = s * 0.28, bh = s * 0.44
+    let bx = s * 0.615, bw = s * 0.078, bTop = s * 0.36, bh = s * 0.286
     let block = CGPath(roundedRect: CGRect(x: bx, y: y(bTop + bh), width: bw, height: bh),
-                       cornerWidth: s * 0.025, cornerHeight: s * 0.025, transform: nil)
+                       cornerWidth: s * 0.016, cornerHeight: s * 0.016, transform: nil)
     ctx.addPath(block); ctx.setFillColor(lime); ctx.fillPath()
 
     return ctx.makeImage()!
