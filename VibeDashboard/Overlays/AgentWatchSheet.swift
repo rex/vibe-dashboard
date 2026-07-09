@@ -63,7 +63,7 @@ struct AgentWatchSheet: View {
         ScrollView(.horizontal, showsIndicators: true) {
             HStack(alignment: .top, spacing: Theme.space.x3) {
                 ForEach(Array(panes.enumerated()), id: \.element.id) { index, pane in
-                    if index > 0, panes[index - 1].phaseIndex != pane.phaseIndex {
+                    if target.kind == .workflow, index > 0, panes[index - 1].phaseIndex != pane.phaseIndex {
                         WorkflowHopDivider(phase: pane.phaseIndex)
                     }
                     TranscriptPaneView(pane: pane, fontSize: fontSize, expanded: $expanded)
@@ -132,7 +132,9 @@ private struct TranscriptPaneView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: Theme.space.x1) {
             HStack(spacing: Theme.space.x2) {
-                StatusBadge(text: "phase \(pane.phaseIndex)", tone: .info, small: true)
+                if let phaseLabel = pane.phaseLabel {
+                    StatusBadge(text: phaseLabel, tone: .info, small: true)
+                }
                 Text(pane.title)
                     .font(VibeFont.mono(VibeFont.size.sm, .bold))
                     .foregroundStyle(Theme.color.textBright)
@@ -177,7 +179,7 @@ private struct TranscriptEventRow: View {
                         .foregroundStyle(Theme.color.textMuted)
                 }
             } else {
-                MarkdownBody(text: event.body, fontSize: fontSize)
+                AgentWatchMarkdownBody(text: event.body, fontSize: fontSize)
             }
         }
         .padding(Theme.space.x2)
@@ -223,36 +225,5 @@ private struct TranscriptEventRow: View {
         }
         .background(Theme.color.bgVoid)
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius.xs, style: .continuous))
-    }
-}
-
-private struct MarkdownBody: View {
-    let text: String
-    let fontSize: CGFloat
-    var body: some View {
-        Text(attributed)
-            .font(VibeFont.mono(fontSize))
-            .foregroundStyle(Theme.color.textSecondary)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-    private var attributed: AttributedString {
-        (try? AttributedString(markdown: text)) ?? AttributedString(text)
-    }
-}
-
-private struct WorkflowHopDivider: View {
-    let phase: Int
-    var body: some View {
-        VStack(spacing: Theme.space.x2) {
-            Rectangle().fill(Theme.color.border).frame(width: 1, height: 150)
-            VibeIcon("corner-down-right", size: 16, color: Theme.color.accent)
-            Text("hop\nphase \(phase)")
-                .font(VibeFont.mono(VibeFont.size.xxs, .bold))
-                .foregroundStyle(Theme.color.accent)
-                .multilineTextAlignment(.center)
-            Rectangle().fill(Theme.color.border).frame(width: 1, height: 150)
-        }
-        .frame(height: 430)
     }
 }

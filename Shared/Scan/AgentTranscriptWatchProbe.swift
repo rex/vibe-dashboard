@@ -20,6 +20,7 @@ struct TranscriptPane: Identifiable, Sendable, Hashable {
     var subtitle: String
     var path: String
     var phaseIndex: Int
+    var phaseLabel: String?
     var events: [TranscriptEvent]
 }
 
@@ -60,6 +61,7 @@ enum AgentTranscriptWatchProbe {
                 subtitle: item.subtitle,
                 path: item.path,
                 phaseIndex: phase,
+                phaseLabel: kind == .workflow ? "phase \(phase)" : nil,
                 events: item.events
             )
         }
@@ -87,6 +89,10 @@ enum AgentTranscriptWatchProbe {
     private static func events(from line: String) -> [TranscriptEvent] {
         guard let obj = object(line) else { return [] }
         let ts = (obj["timestamp"] as? String).flatMap(AgentTranscriptProbe.parseTimestamp)
+        if obj["type"] as? String == "response_item",
+           let payload = obj["payload"] as? [String: Any] {
+            return codexEvents(payload: payload, timestamp: ts)
+        }
         let role = ((obj["message"] as? [String: Any])?["role"] as? String)
             ?? (obj["type"] as? String) ?? "event"
         let base = "\(obj["uuid"] as? String ?? UUID().uuidString)"
@@ -132,6 +138,43 @@ enum AgentTranscriptWatchProbe {
         }
     }
 
+    private static func codexEvents(payload: [String: Any], timestamp: Date?) -> [TranscriptEvent] {
+        let payloadType = payload["type"] as? String ?? "response_item"
+        let id = codexEventID(payload: payload, timestamp: timestamp, payloadType: payloadType)
+        switch payloadType {
+        case "message":
+            let role = payload["role"] as? String ?? "message"
+            let body = contentString(payload["content"])
+            guard !body.isEmpty else { return [] }
+            return [event(id: id, kind: .text,
+                          payload: EventPayload(role: role, title: role, body: body),
+                          timestamp: timestamp)]
+        case "function_call", "custom_tool_call", "tool_search_call":
+            let name = payload["name"] as? String ?? payloadType.replacingOccurrences(of: "_", with: " ")
+            let body = codexBody(payload["arguments"] ?? payload["input"] ?? payload["execution"])
+            return [event(id: id, kind: .toolUse,
+                          payload: EventPayload(role: "assistant", title: name, body: body),
+                          timestamp: timestamp)]
+        case "function_call_output", "custom_tool_call_output", "tool_search_output":
+            let body = codexBody(payload["output"] ?? payload["tools"] ?? payload["execution"])
+            let status = payload["status"] as? String
+            return [event(id: id, kind: .toolResult,
+                          payload: EventPayload(role: "tool", title: "tool result",
+                                                body: body, isError: status == "failed"),
+                          timestamp: timestamp)]
+        default:
+            return []
+        }
+    }
+
+    private static func codexEventID(payload: [String: Any], timestamp: Date?,
+                                     payloadType: String) -> String {
+        if let id = payload["id"] as? String { return id }
+        if let id = payload["call_id"] as? String { return id + ":" + payloadType }
+        let stamp = timestamp.map { RelTime.iso.string(from: $0) } ?? "unknown"
+        return stamp + ":" + payloadType + ":" + (payload["role"] as? String ?? "")
+    }
+
     private static func event(id: String, kind: TranscriptEventKind,
                               payload: EventPayload, timestamp: Date?) -> TranscriptEvent {
         TranscriptEvent(id: id, kind: kind, role: payload.role, title: payload.title,
@@ -155,13 +198,27 @@ enum AgentTranscriptWatchProbe {
         if let blocks = value as? [[String: Any]] {
             return blocks.map { block in
                 switch block["type"] as? String {
-                case "text": return block["text"] as? String ?? ""
+                case "text", "input_text", "output_text": return block["text"] as? String ?? ""
                 case "image": return "[image]"
                 default: return pretty(block)
                 }
             }.joined(separator: "\n")
         }
         return pretty(value)
+    }
+
+    private static func codexBody(_ value: Any?) -> String {
+        if let string = value as? String,
+           let data = string.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) {
+            return clipped(pretty(object))
+        }
+        return clipped(contentString(value))
+    }
+
+    private static func clipped(_ text: String, limit: Int = 40_000) -> String {
+        guard text.count > limit else { return text }
+        return String(text.prefix(limit)) + "\n\n[truncated \(text.count - limit) chars]"
     }
 
     private static func pretty(_ value: Any?) -> String {
