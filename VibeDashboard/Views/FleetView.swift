@@ -61,7 +61,8 @@ struct FleetView: View {
         Group {
             if t.agentsActive > 0, let s = store.fleet.sessions.first {
                 Text("\(t.agentsActive) agent\(t.agentsActive > 1 ? "s" : "") working").foregroundStyle(Theme.color.warn)
-                + Text(" · \(t.abandonedWorktrees) abandoned worktrees · \(s.name) is being edited live.").foregroundStyle(Theme.color.textSecondary)
+                + Text(" · \(t.abandonedWorktrees) abandoned worktrees · \(s.repo.name) is being edited live.")
+                    .foregroundStyle(Theme.color.textSecondary)
             } else {
                 Text("worker swept \(store.fleet.scanner.lastSweep). ").foregroundStyle(Theme.color.textSecondary)
                 + Text("\(t.healthy) in policy").foregroundStyle(Theme.color.ok)

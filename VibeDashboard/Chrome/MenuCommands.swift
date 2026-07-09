@@ -121,10 +121,12 @@ struct MenuBarContent: View {
             } else {
                 ForEach(store.fleet.sessions) { s in
                     HStack(spacing: Theme.space.x2) {
-                        AgentPulse(active: true, color: s.health == .danger ? Theme.color.danger : Theme.color.warn, size: 11)
-                        Text(s.name).font(VibeFont.mono(VibeFont.size.xs)).foregroundStyle(Theme.color.textPrimary)
+                        AgentPulse(active: true, color: s.repo.health == .danger ? Theme.color.danger : Theme.color.warn, size: 11)
+                        Text(s.repo.name).font(VibeFont.mono(VibeFont.size.xs)).foregroundStyle(Theme.color.textPrimary)
                         Spacer()
-                        Text("\(s.agent?.tool ?? "agent") · \(s.agent?.elapsed ?? "—")").font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textMuted)
+                        Text("\(s.agent.tool ?? "agent") · \(s.agent.elapsed ?? "—")")
+                            .font(VibeFont.mono(VibeFont.size.xxs))
+                            .foregroundStyle(Theme.color.textMuted)
                     }
                 }
             }

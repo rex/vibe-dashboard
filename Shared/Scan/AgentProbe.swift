@@ -13,19 +13,27 @@ import Foundation
 /// idle is COMPLETE and no longer surfaced at all (dropped by the probe).
 enum AgentState: String, Sendable, Hashable { case active, idle }
 
+enum AgentSessionKind: String, Sendable, Hashable {
+    case standard, subagent, workflow
+}
+
 enum AgentProbe {
-    /// Pierce's lifecycle spec: a session is ACTIVE for 15 min after its last write,
+    /// Pierce's lifecycle spec: a session is ACTIVE for 15 min after its last activity,
     /// then IDLE up to 1 hour, then COMPLETE (dropped — no longer shown).
     static let activeWindow: TimeInterval = 15 * 60
     static let retentionWindow: TimeInterval = 60 * 60
 
     struct Session: Sendable {
+        var id: String
         var pid: Int
         var tool: String        // claude-code | codex | aider | gemini | opencode
         var cwd: String
         var elapsed: String
         var lastActivity: Date
         var state: AgentState
+        var kind: AgentSessionKind = .standard
+        var transcriptPath: String? = nil
+        var workflowId: String? = nil
     }
 
     /// Measured, uncommitted work for a live session — every field is real.
@@ -40,82 +48,34 @@ enum AgentProbe {
     static var fm: FileManager { .default }
 
     static func sessions(now: Date = Date()) async -> [Session] {
-        // PRIMARY — coding agents append a live transcript per session; a transcript
-        // touched within the retention window IS a live session, mapped to its repo by
-        // the transcript's real `cwd`. Reliable no matter how the process is named in
-        // `ps` (modern Claude Code / Codex run under node/SDK wrappers a basename match
-        // misses). Claude: ~/.claude/projects. Codex: ~/.codex/sessions/YYYY/MM/DD.
-        var best: [String: Session] = [:]   // cwd → freshest session across providers
-        func consider(_ s: Session) {
-            if let e = best[s.cwd], e.lastActivity >= s.lastActivity { return }
-            best[s.cwd] = s
-        }
-        claudeTranscriptSessions(now: now).forEach(consider)
-        codexTranscriptSessions(now: now).forEach(consider)
+        // PRIMARY - coding agents append a transcript per session. Liveness comes from
+        // the transcript's embedded event timestamps, not the file mtime: mtime can be
+        // refreshed by compaction/indexing and resurrect a dead session.
+        var found = claudeTranscriptSessions(now: now) + codexTranscriptSessions(now: now)
+        let transcriptCwds = Set(found.map { AgentTranscriptProbe.normalizedPath($0.cwd) })
         // SUPPLEMENT — ps for OTHER agent CLIs (aider/gemini/opencode) with no transcript
         // store here. Only where no transcript already claimed the cwd.
-        for s in await psSessions(now: now) where best[s.cwd] == nil { best[s.cwd] = s }
-        return Array(best.values)
+        for s in await psSessions(now: now)
+            where !transcriptCwds.contains(AgentTranscriptProbe.normalizedPath(s.cwd)) {
+            found.append(s)
+        }
+        return found.sorted { $0.lastActivity > $1.lastActivity }
     }
 
-    /// Live Claude sessions from transcript JSONLs under ~/.claude/projects/<slug>/.
+    /// Live Claude sessions from transcript JSONLs under ~/.claude/projects, including
+    /// nested subagent workflow transcripts.
     static func claudeTranscriptSessions(now: Date) -> [Session] {
-        let root = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/projects")
-        guard let slugs = try? fm.contentsOfDirectory(atPath: root) else { return [] }
-        var best: [String: Session] = [:]
-        for slug in slugs {
-            let dir = (root as NSString).appendingPathComponent(slug)
-            guard let files = try? fm.contentsOfDirectory(atPath: dir) else { continue }
-            for f in files where f.hasSuffix(".jsonl") {
-                let path = (dir as NSString).appendingPathComponent(f)
-                keepFreshest(&best, sessionFromTranscript(path, tool: "claude-code", now: now))
-            }
-        }
-        return Array(best.values)
+        AgentTranscriptProbe.claudeSessions(now: now)
     }
 
     /// Live Codex sessions from ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl. Only today's
     /// and yesterday's date dirs are scanned (a fresh session is < 1h old), so the deep,
     /// ever-growing session archive is never enumerated.
     static func codexTranscriptSessions(now: Date) -> [Session] {
-        let root = (NSHomeDirectory() as NSString).appendingPathComponent(".codex/sessions")
-        let cal = Calendar(identifier: .gregorian)
-        var best: [String: Session] = [:]
-        for offset in 0...1 {
-            guard let day = cal.date(byAdding: .day, value: -offset, to: now) else { continue }
-            let c = cal.dateComponents([.year, .month, .day], from: day)
-            guard let y = c.year, let m = c.month, let d = c.day else { continue }
-            let dir = "\(root)/\(y)/\(String(format: "%02d", m))/\(String(format: "%02d", d))"
-            guard let files = try? fm.contentsOfDirectory(atPath: dir) else { continue }
-            for f in files where f.hasSuffix(".jsonl") {
-                let path = (dir as NSString).appendingPathComponent(f)
-                keepFreshest(&best, sessionFromTranscript(path, tool: "codex", now: now))
-            }
-        }
-        return Array(best.values)
+        AgentTranscriptProbe.codexSessions(now: now)
     }
 
-    private static func keepFreshest(_ best: inout [String: Session], _ s: Session?) {
-        guard let s else { return }
-        if let e = best[s.cwd], e.lastActivity >= s.lastActivity { return }
-        best[s.cwd] = s
-    }
-
-    /// Build a Session from a transcript file when it's within the retention window. nil
-    /// when stale (> 1h — COMPLETE), unreadable, or missing a cwd. Bounded file IO.
-    private static func sessionFromTranscript(_ path: String, tool: String, now: Date) -> Session? {
-        guard let attrs = try? fm.attributesOfItem(atPath: path),
-              let mtime = attrs[.modificationDate] as? Date,
-              let state = lifecycle(age: now.timeIntervalSince(mtime)) else { return nil }
-        let head = fileHead(path)
-        guard let cwd = extractJSONString(head, key: "cwd"), !cwd.isEmpty else { return nil }
-        let start = extractJSONString(head, key: "timestamp").flatMap { RelTime.iso.date(from: $0) }
-        return Session(pid: 0, tool: tool, cwd: cwd,
-                       elapsed: start.map { RelTime.compact(now.timeIntervalSince($0)) } ?? "live",
-                       lastActivity: mtime, state: state)
-    }
-
-    /// Lifecycle from a session's age since last write: active (< 15m), idle (< 1h), or
+    /// Lifecycle from a session's age since last activity: active (< 15m), idle (< 1h), or
     /// nil = COMPLETE (no longer surfaced). Pure + testable. A negative age (clock skew /
     /// a future mtime) is treated as active.
     static func lifecycle(age: TimeInterval) -> AgentState? {
@@ -137,27 +97,19 @@ enum AgentProbe {
             guard let tool = matchTool(command: parts[2]), tool != "claude-code", tool != "codex" else { continue }
             guard let cwd = await cwd(of: pid), !cwd.isEmpty else { continue }
             // A live process is active by definition (ps only lists running ones).
-            found.append(Session(pid: pid, tool: tool, cwd: cwd, elapsed: humanize(parts[1]),
-                                 lastActivity: now, state: .active))
+            found.append(Session(
+                id: "\(tool):\(pid)", pid: pid, tool: tool,
+                cwd: AgentTranscriptProbe.normalizedPath(cwd), elapsed: humanize(parts[1]),
+                lastActivity: now, state: .active
+            ))
         }
         return found
-    }
-
-    /// First ~16KB of a file — the first JSONL line is small but transcripts can be huge.
-    private static func fileHead(_ path: String, bytes: Int = 16384) -> String {
-        guard let fh = FileHandle(forReadingAtPath: path) else { return "" }
-        defer { try? fh.close() }
-        let data = (try? fh.read(upToCount: bytes)) ?? Data()
-        return String(decoding: data, as: UTF8.self)
     }
 
     /// Minimal `"key":"value"` extractor over a JSON text prefix (no full parse; these
     /// values never contain an unescaped quote). Pure + testable.
     static func extractJSONString(_ text: String, key: String) -> String? {
-        guard let r = text.range(of: "\"\(key)\":\"") else { return nil }
-        let rest = text[r.upperBound...]
-        guard let end = rest.firstIndex(of: "\"") else { return nil }
-        return String(rest[..<end])
+        AgentTranscriptProbe.jsonStringValues(in: text, key: key).first
     }
 
     /// Classify a process command line as a coding-agent CLI, or nil. Matches on the

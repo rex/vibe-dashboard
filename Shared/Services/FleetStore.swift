@@ -120,24 +120,37 @@ final class FleetStore {
     func refreshAgents(now: Date = Date()) async {
         let sessions = await AgentProbe.sessions(now: now)
         var work: [String: AgentProbe.WorkStat] = [:]
-        for s in sessions { work[s.cwd] = await AgentProbe.workStat(cwd: s.cwd, now: now) }
+        for s in sessions { work[s.id] = await AgentProbe.workStat(cwd: s.cwd, now: now) }
         applyAgentSessions(sessions, work: work, now: now)
     }
 
     private func applyAgentSessions(_ sessions: [AgentProbe.Session],
                                     work: [String: AgentProbe.WorkStat], now: Date) {
         var repos = rawFleet.repos
-        var target: [Int: AgentInfo] = [:]
+        var target: [Int: [AgentInfo]] = [:]
         for s in sessions {
+            let sessionCwd = AgentTranscriptProbe.normalizedPath(s.cwd)
             guard let idx = repos.indices
-                .filter({ s.cwd == repos[$0].absolutePath || s.cwd.hasPrefix(repos[$0].absolutePath + "/") })
+                .filter({
+                    let repoPath = AgentTranscriptProbe.normalizedPath(repos[$0].absolutePath)
+                    return sessionCwd == repoPath || sessionCwd.hasPrefix(repoPath + "/")
+                })
                 .max(by: { repos[$0].absolutePath.count < repos[$1].absolutePath.count }) else { continue }
-            target[idx] = AgentInfo.live(session: s, work: work[s.cwd] ?? AgentProbe.WorkStat(),
-                                         clean: repos[idx].worktree.clean,
-                                         branch: repos[idx].build.branch, now: now)
+            target[idx, default: []].append(AgentInfo.live(session: s, work: work[s.id] ?? AgentProbe.WorkStat(),
+                                                           clean: repos[idx].worktree.clean,
+                                                           branch: repos[idx].build.branch, now: now))
         }
         var changed = false
-        for i in repos.indices where repos[i].agent != target[i] { repos[i].agent = target[i]; changed = true }
+        for i in repos.indices {
+            let agents = (target[i] ?? []).sorted {
+                ($0.lastActivityAt ?? .distantPast) > ($1.lastActivityAt ?? .distantPast)
+            }
+            if repos[i].agents != agents || repos[i].agent != agents.first {
+                repos[i].agents = agents
+                repos[i].agent = agents.first
+                changed = true
+            }
+        }
         guard changed else { return }   // no agent state moved — skip the re-assemble (idle = zero work)
         rawFleet = Fleet.assemble(scanner: rawFleet.scanner, appBuild: rawFleet.appBuild, repos: repos,
                                   activity: rawFleet.activity, autopilot: rawFleet.autopilot,

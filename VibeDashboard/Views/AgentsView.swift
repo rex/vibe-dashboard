@@ -20,6 +20,16 @@ private func agentTool(_ id: String?) -> AgentTool {
     }
 }
 
+private struct AgentKindMark { let text: String; let icon: String; let tone: VibeTone }
+
+private func agentKindMark(_ kind: AgentSessionKind) -> AgentKindMark {
+    switch kind {
+    case .standard: return AgentKindMark(text: "standard", icon: "terminal", tone: .neutral)
+    case .subagent: return AgentKindMark(text: "subagent", icon: "corner-down-right", tone: .info)
+    case .workflow: return AgentKindMark(text: "workflow", icon: "git-merge", tone: .policy)
+    }
+}
+
 /// 14pt sits between Theme.space.x3 (12) and .x4 (16); the spec calls for it
 /// on the session grid gap and SessionCard padding. Named, not magic.
 private enum AgentsLayout { static let gap14: CGFloat = 14 }
@@ -30,7 +40,7 @@ struct AgentsView: View {
     @Environment(AppState.self) private var app
     @Environment(FleetStore.self) private var store
 
-    private var sessions: [Repo] { store.fleet.sessions }
+    private var sessions: [FleetAgentSession] { store.fleet.sessions }
     private var sprawl: [(repo: Repo, worktree: Worktree)] {
         store.fleet.worktreeSprawl.sorted { a, b in
             rank(a.worktree.state) < rank(b.worktree.state)
@@ -73,7 +83,11 @@ struct AgentsView: View {
             (
                 Text("\(t.agentsActive) working now")
                     .foregroundStyle(t.agentsActive > 0 ? Theme.color.warn : Theme.color.ok)
-                + Text(" · \(t.abandonedWorktrees) abandoned worktrees · \(t.bloatedDocs) bloated docs · \(t.staleChangelogs) stale changelogs. rein them in.")
+                + Text(" · \(t.abandonedWorktrees) abandoned worktrees")
+                    .foregroundStyle(Theme.color.textSecondary)
+                + Text(" · \(t.bloatedDocs) bloated docs")
+                    .foregroundStyle(Theme.color.textSecondary)
+                + Text(" · \(t.staleChangelogs) stale changelogs. rein them in.")
                     .foregroundStyle(Theme.color.textSecondary)
             )
             .font(VibeFont.mono(VibeFont.size.sm))
@@ -85,7 +99,7 @@ struct AgentsView: View {
 // MARK: - Working now
 
 private struct WorkingNowSection: View {
-    let sessions: [Repo]
+    let sessions: [FleetAgentSession]
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.space.x2) {
             Text("working now · \(sessions.count)")
@@ -97,7 +111,7 @@ private struct WorkingNowSection: View {
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 330), spacing: AgentsLayout.gap14)],
                           spacing: AgentsLayout.gap14) {
-                    ForEach(sessions) { SessionCard(repo: $0) }
+                    ForEach(sessions) { SessionCard(session: $0) }
                 }
             }
         }
@@ -105,11 +119,13 @@ private struct WorkingNowSection: View {
 }
 
 private struct SessionCard: View {
-    let repo: Repo
+    let session: FleetAgentSession
     @Environment(AppState.self) private var app
 
-    private var agent: AgentInfo { repo.agent ?? AgentInfo() }
+    private var repo: Repo { session.repo }
+    private var agent: AgentInfo { session.agent }
     private var tool: AgentTool { agentTool(agent.tool) }
+    private var kind: AgentKindMark { agentKindMark(agent.sessionKind) }
     private var isIdle: Bool { agent.state == .idle }
     // ACTIVE keeps the live amber treatment; IDLE goes muted + labeled, never bright-live.
     private var cardBg: Color { isIdle ? Theme.color.surfaceSunken : Theme.color.warnSurfaceSoft }
@@ -139,12 +155,7 @@ private struct SessionCard: View {
 
     private var identityRow: some View {
         HStack(alignment: .center, spacing: Theme.space.x2_5) {
-            VibeIcon(tool.icon, size: 17, color: isIdle ? Theme.color.textMuted : Theme.color.warn)
-                .frame(width: 34, height: 34)
-                .background(isIdle ? Theme.color.surfaceSunken : Theme.color.warnSurface)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous)
-                    .strokeBorder(cardLine, lineWidth: 1))
+            repoIcon
             VStack(alignment: .leading, spacing: 2) {
                 Button { app.openRepo(repo.id) } label: {
                     HStack(spacing: 7) {
@@ -156,14 +167,40 @@ private struct SessionCard: View {
                     }
                 }
                 .buttonStyle(.plain)
-                Text("\(tool.label) · \(agent.branch ?? "—") · \(agent.elapsed ?? "—")")
-                    .font(VibeFont.mono(VibeFont.size.xxs))
-                    .foregroundStyle(Theme.color.textMuted)
-                    .lineLimit(1)
+                sessionMeta
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             AgentPulse(active: !isIdle, color: isIdle ? Theme.color.textFaint : Theme.color.warn, size: 14)
         }
+    }
+
+    private var repoIcon: some View {
+        RepoLogoThumb(repo: repo, size: 34, live: false)
+            .overlay(alignment: .bottomTrailing) {
+                VibeIcon(tool.icon, size: 9, color: isIdle ? Theme.color.textMuted : Theme.color.warn)
+                    .frame(width: 15, height: 15)
+                    .background(Theme.color.bgApp)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.radius.xs, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.radius.xs, style: .continuous)
+                        .strokeBorder(cardLine, lineWidth: 1))
+                    .offset(x: 4, y: 4)
+                    .help(tool.label)
+            }
+    }
+
+    private var sessionMeta: some View {
+        HStack(spacing: Theme.space.x1_5) {
+            VibeIcon(tool.icon, size: 10, color: Theme.color.textMuted)
+            Text(tool.label)
+            Text("· \(agent.branch ?? "—") · \(agent.elapsed ?? "—")")
+            Pill(text: kind.text, tone: kind.tone, icon: kind.icon)
+            if let workflowId = agent.workflowId {
+                Text("· \(workflowId)").foregroundStyle(Theme.color.textFaint)
+            }
+        }
+        .font(VibeFont.mono(VibeFont.size.xxs))
+        .foregroundStyle(Theme.color.textMuted)
+        .lineLimit(1)
     }
 
     private var diffMeta: some View {
@@ -176,9 +213,9 @@ private struct SessionCard: View {
                     Text("\u{2212}\(removed.formatted())").foregroundStyle(Theme.color.danger)
                 }
             }
-            // IDLE shows the honest "idle · last write 22m ago"; amber "idle" is the one warm note.
+            // IDLE shows the honest "idle · last activity 22m ago"; amber "idle" is the one warm note.
             Text(isIdle ? "idle " : "").foregroundColor(Theme.color.warn) +
-                Text("· last write \(agent.lastActivity)").foregroundColor(Theme.color.textMuted)
+                Text("· last activity \(agent.lastActivity)").foregroundColor(Theme.color.textMuted)
         }
         .font(VibeFont.mono(VibeFont.size.xxs))
         .monospacedDigit()
@@ -186,14 +223,18 @@ private struct SessionCard: View {
 
     private var actionRow: some View {
         HStack(spacing: Theme.space.x2) {
-            VibeButton(title: "Watch", icon: "terminal", variant: .secondary, size: .sm, block: true) {
-                app.openRepo(repo.id); app.openConsole(.output)
+            VibeButton(title: watchTitle, icon: "terminal", variant: .secondary, size: .sm, block: true) {
+                app.watchAgent(agent, repo: repo)
             }
             // Agents can't be paused (ps/lsof is read-only) — reveal the tree instead.
             VibeButton(title: "Reveal", icon: "folder-open", variant: .secondary, size: .sm, block: true) {
                 app.reveal(path: repo.absolutePath)
             }
         }
+    }
+
+    private var watchTitle: String {
+        agent.sessionKind == .workflow ? "Watch workflow" : "Watch"
     }
 }
 

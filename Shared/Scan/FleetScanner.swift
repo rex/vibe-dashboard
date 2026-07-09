@@ -114,14 +114,26 @@ struct FleetScanner: Sendable {
     /// background refresh so a full scan and a 2-minute refresh build identical sessions.
     private func attachLiveSessions(_ repos: inout [Repo], now: Date) async {
         let sessions = await AgentProbe.sessions(now: now)
+        var target: [Int: [AgentInfo]] = [:]
         for s in sessions {
+            let sessionCwd = AgentTranscriptProbe.normalizedPath(s.cwd)
             guard let idx = repos.indices
-                .filter({ s.cwd == repos[$0].absolutePath || s.cwd.hasPrefix(repos[$0].absolutePath + "/") })
+                .filter({
+                    let repoPath = AgentTranscriptProbe.normalizedPath(repos[$0].absolutePath)
+                    return sessionCwd == repoPath || sessionCwd.hasPrefix(repoPath + "/")
+                })
                 .max(by: { repos[$0].absolutePath.count < repos[$1].absolutePath.count }) else { continue }
             let work = await AgentProbe.workStat(cwd: repos[idx].absolutePath, now: now)
-            repos[idx].agent = AgentInfo.live(session: s, work: work,
-                                              clean: repos[idx].worktree.clean,
-                                              branch: repos[idx].build.branch, now: now)
+            target[idx, default: []].append(AgentInfo.live(session: s, work: work,
+                                                           clean: repos[idx].worktree.clean,
+                                                           branch: repos[idx].build.branch, now: now))
+        }
+        for i in repos.indices {
+            let agents = (target[i] ?? []).sorted {
+                ($0.lastActivityAt ?? .distantPast) > ($1.lastActivityAt ?? .distantPast)
+            }
+            repos[i].agents = agents
+            repos[i].agent = agents.first
         }
     }
 

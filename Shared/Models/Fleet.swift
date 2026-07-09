@@ -48,6 +48,12 @@ struct TreeNode: Identifiable, Sendable, Hashable {
     var id: String { repoId }
 }
 
+struct FleetAgentSession: Identifiable, Sendable, Hashable {
+    var repo: Repo
+    var agent: AgentInfo
+    var id: String { repo.id + "·" + (agent.id.isEmpty ? agent.tool ?? "agent" : agent.id) }
+}
+
 /// A node in the sidebar's filesystem tree.
 ///
 /// The sidebar mirrors the on-disk shape of the scan root. A `repo` node is a real
@@ -110,7 +116,14 @@ struct Fleet: Sendable {
     var findings: [Finding] = []
     var skillRollup: [SkillRollup] = []
 
-    var sessions: [Repo] { leaves.filter { $0.agentActive } }
+    var sessions: [FleetAgentSession] {
+        leaves.flatMap { repo in
+            repo.agentSessions.map { FleetAgentSession(repo: repo, agent: $0) }
+        }
+        .sorted {
+            ($0.agent.lastActivityAt ?? .distantPast) > ($1.agent.lastActivityAt ?? .distantPast)
+        }
+    }
     var worktreeSprawl: [(repo: Repo, worktree: Worktree)] {
         leaves.flatMap { r in r.worktrees.map { (r, $0) } }
     }
@@ -162,14 +175,14 @@ struct Fleet: Sendable {
         t.godFiles = leaves.reduce(0) { $0 + $1.census.godFiles.count }
         t.dirty = leaves.filter { !$0.worktree.clean }.count
         t.compliance = leaves.isEmpty ? 100 : Int((leaves.reduce(0) { $0 + $1.compliance }) / leaves.count)
-        t.agentsActive = leaves.filter { $0.agentActive }.count
+        t.agentsActive = leaves.reduce(0) { $0 + $1.agentSessions.count }
         t.abandonedWorktrees = leaves.reduce(0) { $0 + $1.abandonedWorktrees }
         t.staleWorktrees = leaves.reduce(0) { $0 + $1.staleWorktrees }
         t.bloatedDocs = leaves.filter { $0.docs.taskState.status == .fail || $0.docs.agentsMd.status == .fail }.count
         t.staleChangelogs = leaves.filter { $0.docs.changelog.status != .ok }.count
         t.serenaActive = leaves.filter { $0.serena?.active == true }.count
         t.mcpFailed = leaves.reduce(0) { $0 + $1.mcp.filter { $0.status == .failed }.count }
-        t.guardrailless = leaves.filter { $0.agentActive && !$0.hasActiveGuardrail() }.count
+        t.guardrailless = leaves.reduce(0) { $0 + ($1.hasActiveGuardrail() ? 0 : $1.agentSessions.count) }
         f.totals = t
 
         f.findings = leaves.flatMap { r in

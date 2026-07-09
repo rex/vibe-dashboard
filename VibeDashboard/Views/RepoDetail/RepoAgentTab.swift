@@ -11,8 +11,8 @@ import SwiftUI
 
 // Doc-bloat thresholds (soft / hard) per file class.
 private enum DocLimit {
-    static let taskSoft: Double = 400,  taskHard: Double = 800
-    static let mdSoft: Double = 300,    mdHard: Double = 500
+    static let taskSoft: Double = 400, taskHard: Double = 800
+    static let mdSoft: Double = 300, mdHard: Double = 500
 }
 
 // MARK: - Agent tab
@@ -42,13 +42,18 @@ struct RepoAgentTab: View {
     // ---- 1. live session ----
 
     @ViewBuilder private var liveSessionPanel: some View {
-        VibePanel(title: "live session", icon: "bot", glow: false) {
-            if let a = repo.agent, a.active {
-                LiveSessionCard(repo: repo, agent: a)
+        VibePanel(title: repo.agentSessions.count == 1 ? "live session" : "live sessions",
+                  icon: "bot", glow: false) {
+            if !repo.agentSessions.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.space.x3) {
+                    ForEach(repo.agentSessions, id: \.id) { a in
+                        LiveSessionCard(repo: repo, agent: a)
+                    }
+                }
             } else {
                 HStack(spacing: Theme.space.x2) {
                     VibeIcon("circle-slash", size: 13, color: Theme.color.textFaint)
-                    Text("idle · no agent editing · last write \(repo.agent?.lastActivity ?? "—")")
+                    Text("idle · no agent editing · last activity \(repo.agent?.lastActivity ?? "—")")
                         .font(VibeFont.mono(VibeFont.size.sm))
                         .foregroundStyle(Theme.color.textMuted)
                         .lineLimit(1)
@@ -214,13 +219,13 @@ private struct LiveSessionCard: View {
                     Text("+\(added.formatted())").foregroundStyle(Theme.color.ok)
                     Text("\u{2212}\(removed.formatted())").foregroundStyle(Theme.color.danger)
                 }
-                // IDLE surfaces the honest "idle · last write 22m ago"; amber "idle"
+                // IDLE surfaces the honest "idle · last activity 22m ago"; amber "idle"
                 // is the one warm note on an otherwise muted card.
                 if isIdle {
                     Text(" · ").foregroundStyle(Theme.color.textGhost)
                     Text("idle").foregroundStyle(Theme.color.warn)
                 }
-                Text(" · last write \(agent.lastActivity)").foregroundStyle(Theme.color.textMuted)
+                Text(" · last activity \(agent.lastActivity)").foregroundStyle(Theme.color.textMuted)
             }
             .font(VibeFont.mono(VibeFont.size.xxs))
             .lineLimit(1)

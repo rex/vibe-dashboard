@@ -63,6 +63,7 @@ struct Repo: Identifiable, Sendable, Hashable {
     var census = Census()
     var drift = Drift()
     var hygiene = Hygiene()
+    var agents: [AgentInfo] = []       // every retained live/idle session mapped to this repo
     var agent: AgentInfo? = nil
     var worktrees: [Worktree] = []
     var docs = Docs()
@@ -84,7 +85,8 @@ struct Repo: Identifiable, Sendable, Hashable {
     // derived
     var isWorkspace: Bool { kind == .workspace }
     var emblem: String { Brand.emblem(id: name, stack: stack) }
-    var agentActive: Bool { agent?.active ?? false }
+    var agentSessions: [AgentInfo] { agents.isEmpty ? agent.map { [$0] } ?? [] : agents }
+    var agentActive: Bool { !agentSessions.isEmpty }
     var lang: Lang { Brand.langOf(stack) }
 
     func hasActiveGuardrail() -> Bool {

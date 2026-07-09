@@ -166,7 +166,7 @@ struct RepoLogoThumb: View {
                 .frame(width: Swift.max(5, size * 0.16), height: Swift.max(5, size * 0.16))
                 .overlay(Circle().strokeBorder(Theme.color.bgApp, lineWidth: Swift.max(1, size * 0.03)))
                 .padding(Swift.max(1, size * 0.08))
-                .help("idle agent · last write \(repo.agent?.lastActivity ?? "—")")
+                .help("idle agent · last activity \(repo.agent?.lastActivity ?? "—")")
         }
     }
 }

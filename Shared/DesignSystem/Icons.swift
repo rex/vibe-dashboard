@@ -39,7 +39,8 @@ enum Lucide {
         "zap": "bolt.fill", "zap-off": "bolt.slash", "flame": "flame.fill",
         "clock": "clock", "history": "clock.arrow.circlepath", "timer": "timer",
         // agent / mcp / tools
-        "bot": "cpu", "cpu": "cpu", "brain": "brain", "waypoints": "point.3.connected.trianglepath.dotted",
+        "bot": "cpu", "user": "person", "cpu": "cpu", "brain": "brain",
+        "waypoints": "point.3.connected.trianglepath.dotted",
         "plug": "powerplug", "plug-zap": "powerplug", "radio": "dot.radiowaves.left.and.right",
         "globe": "globe", "network": "network", "wifi-off": "wifi.slash",
         "mouse-pointer-2": "cursorarrow", "code": "chevron.left.forwardslash.chevron.right",

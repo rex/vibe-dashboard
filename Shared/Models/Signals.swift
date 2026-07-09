@@ -77,15 +77,20 @@ struct Hygiene: Sendable, Hashable {
 /// measured (e.g. a repo with no HEAD) so the UI can HIDE them rather than render a
 /// fabricated "+0 −0"; a measured no-op is a real 0 and is shown.
 struct AgentInfo: Sendable, Hashable {
+    var id: String = ""
     var active: Bool = false
-    var state: AgentState = .active  // active (lime, <15m) vs idle (15–60m since last write)
+    var state: AgentState = .active  // active (lime, <15m) vs idle (15–60m since last activity)
     var tool: String? = nil
     var branch: String? = nil
     var elapsed: String? = nil
+    var sessionKind: AgentSessionKind = .standard
+    var transcriptPath: String? = nil
+    var workflowId: String? = nil
     var filesTouched: Int = 0        // real: files changed vs HEAD (git diff --numstat)
     var linesAdded: Int? = nil       // real added lines; nil = not measurable (don't render)
     var linesRemoved: Int? = nil     // real removed lines; nil = not measurable (don't render)
-    var lastActivity: String = "—"   // RelTime.ago of the newest working-tree mtime; "—" if unknown
+    var lastActivityAt: Date? = nil
+    var lastActivity: String = "—"   // RelTime.ago of the newest transcript/work-tree activity; "—" if unknown
     var note: String = "idle"        // honest summary derived from the real diff
 }
 
@@ -94,12 +99,17 @@ extension AgentInfo {
     /// single construction path shared by the full scan and the background agent refresh.
     static func live(session s: AgentProbe.Session, work: AgentProbe.WorkStat,
                      clean: Bool, branch: String, now: Date) -> AgentInfo {
-        AgentInfo(
-            active: true, state: s.state, tool: s.tool, branch: branch, elapsed: s.elapsed,
+        let activityAt = [s.lastActivity, work.lastWrite].compactMap { $0 }.max()
+        return AgentInfo(
+            id: s.id, active: true, state: s.state, tool: s.tool, branch: branch, elapsed: s.elapsed,
+            sessionKind: s.kind,
+            transcriptPath: s.transcriptPath,
+            workflowId: s.workflowId,
             filesTouched: work.filesTouched,
             linesAdded: work.measured ? work.linesAdded : nil,
             linesRemoved: work.measured ? work.linesRemoved : nil,
-            lastActivity: work.lastWrite.map { RelTime.ago($0, now: now) } ?? "—",
+            lastActivityAt: activityAt,
+            lastActivity: activityAt.map { RelTime.ago($0, now: now) } ?? "—",
             note: note(work: work, clean: clean))
     }
 

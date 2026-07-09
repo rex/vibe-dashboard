@@ -23,7 +23,7 @@ struct WorkspaceDetailView: View {
         children.isEmpty ? 100 : children.reduce(0) { $0 + $1.compliance } / children.count
     }
     private var totalSurprises: Int { children.reduce(0) { $0 + $1.surprises.count } }
-    private var agentsActive: Int { children.filter(\.agentActive).count }
+    private var agentsActive: Int { children.reduce(0) { $0 + $1.agentSessions.count } }
 
     var body: some View {
         ScrollView {
