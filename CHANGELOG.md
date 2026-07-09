@@ -3,6 +3,30 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.48.0] — 2026-07-09
+
+### Added
+- **Agent Watch window**: transcript watching moved from a fixed modal sheet to
+  a dedicated resizable window per target — full-height panes per agent,
+  incremental byte-offset tailing (only appended bytes are read per 0.7s tick),
+  sticky bottom-follow with a "↓ n new" chip and a follow-all control, block
+  markdown rendering (fenced code wells, headings, lists, quotes, tables),
+  tool calls paired with their results into single collapsed rows (expand for
+  input/result; live "running" state until the result lands), ghosted thinking
+  rows, workflow hop dividers, pane titles/status from `meta.json` +
+  `journal.jsonl` (spawn order, returned-vs-running, recorded result), and
+  ⌘+/⌘−/⌘0 font control persisted across windows.
+- Watch entry points from both the Agents module and the repo-detail Agent tab.
+
+### Fixed
+- **Agent auto-refresh never ran**: the background monitor was started only
+  after the initial fleet scan completed, so a slow or wedged scan silently
+  disabled live-agent detection. It now starts before the scan, ticks
+  immediately, runs every 30s, and refreshes on app activation.
+- **Session cards collapse to human units**: one card per workflow instead of
+  one per workflow agent file; subagent transcripts fold into their parent
+  session and extend its liveness instead of spawning duplicate cards.
+
 ## [0.2.0] — 2026-07-01
 
 ### Added
