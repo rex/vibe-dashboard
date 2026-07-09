@@ -166,6 +166,8 @@ private func agentToolIcon(_ tool: String?) -> String {
 private struct LiveSessionCard: View {
     let repo: Repo
     let agent: AgentInfo
+    @Environment(AppState.self) private var app
+    @Environment(\.openWindow) private var openWindow
 
     private var isIdle: Bool { agent.state == .idle }
     private var liveTone: VibeTone { repo.health == .danger ? .danger : .warn }
@@ -229,6 +231,15 @@ private struct LiveSessionCard: View {
             }
             .font(VibeFont.mono(VibeFont.size.xxs))
             .lineLimit(1)
+
+            VibeButton(title: agent.sessionKind == .workflow ? "Watch workflow" : "Watch session",
+                       icon: "terminal", variant: .secondary, size: .sm, block: true) {
+                if let target = AgentWatchTarget(agent: agent, repo: repo) {
+                    openWindow(id: "agent-watch", value: target)
+                } else {
+                    app.toast("no transcript path", "this session cannot be watched yet", .neutral)
+                }
+            }
         }
         .padding(Theme.space.x3)
         .frame(maxWidth: .infinity, alignment: .leading)

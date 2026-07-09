@@ -83,8 +83,6 @@ struct OverlayHost: View {
             }
         case .backfillSkills:
             BackfillSheet()
-        case .watchAgent:
-            if let target = app.watchTarget { AgentWatchSheet(target: target) }
         }
     }
 }

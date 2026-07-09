@@ -121,6 +121,7 @@ private struct WorkingNowSection: View {
 private struct SessionCard: View {
     let session: FleetAgentSession
     @Environment(AppState.self) private var app
+    @Environment(\.openWindow) private var openWindow
 
     private var repo: Repo { session.repo }
     private var agent: AgentInfo { session.agent }
@@ -224,7 +225,11 @@ private struct SessionCard: View {
     private var actionRow: some View {
         HStack(spacing: Theme.space.x2) {
             VibeButton(title: watchTitle, icon: "terminal", variant: .secondary, size: .sm, block: true) {
-                app.watchAgent(agent, repo: repo)
+                if let target = AgentWatchTarget(agent: agent, repo: repo) {
+                    openWindow(id: "agent-watch", value: target)
+                } else {
+                    app.toast("no transcript path", "this session cannot be watched yet", .neutral)
+                }
             }
             // Agents can't be paused (ps/lsof is read-only) — reveal the tree instead.
             VibeButton(title: "Reveal", icon: "folder-open", variant: .secondary, size: .sm, block: true) {

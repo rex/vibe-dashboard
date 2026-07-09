@@ -36,6 +36,20 @@ struct VibeDashboardApp: App {
         .defaultSize(width: 1440, height: 900)
         .commands { VibeCommands(app: app, store: store) }
 
+        // Agent transcript watching gets a real, resizable window per target —
+        // a monitoring surface, not a modal sheet.
+        WindowGroup(id: "agent-watch", for: AgentWatchTarget.self) { $target in
+            if let target {
+                AgentWatchWindow(target: target)
+                    .environment(store)
+                    .environment(app)
+                    .frame(minWidth: 900, minHeight: 620)
+                    .preferredColorScheme(.dark)
+            }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1520, height: 960)
+
         MenuBarExtra("Vibe", systemImage: "chevron.left.forwardslash.chevron.right") {
             MenuBarContent().environment(store)
         }

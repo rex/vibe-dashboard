@@ -10,19 +10,33 @@ enum ConsoleTab: String, Hashable, CaseIterable { case output, shell, activity }
 
 enum SheetKind: String, Identifiable, Hashable {
     case about, reconcile, commit, prune, waiver, applySkill, installHooks, palette, excludeFile, backfillSkills
-    case watchAgent
     var id: String { rawValue }
 }
 
 /// A pending "exclude this file from architecture scope" request, awaiting confirm.
 struct ExcludeRequest: Hashable { var repoId: String; var path: String }
 
-struct AgentWatchTarget: Hashable {
+/// What one agent-watch WINDOW tails. Codable + Hashable so it can ride through
+/// `WindowGroup(for:)` / `openWindow(value:)` — each distinct target gets its own
+/// resizable window.
+struct AgentWatchTarget: Hashable, Codable, Sendable {
     var repoName: String
+    var repoPath: String
     var tool: String
     var kind: AgentSessionKind
     var transcriptPath: String
     var workflowId: String?
+}
+
+extension AgentWatchTarget {
+    /// Build from a live session; nil when the session carries no transcript to tail
+    /// (e.g. a ps-detected aider process) — the caller toasts instead of opening.
+    init?(agent: AgentInfo, repo: Repo) {
+        guard let path = agent.transcriptPath else { return nil }
+        self.init(repoName: repo.name, repoPath: repo.absolutePath,
+                  tool: agent.tool ?? "agent", kind: agent.sessionKind,
+                  transcriptPath: path, workflowId: agent.workflowId)
+    }
 }
 
 struct ShellEntry: Identifiable {
@@ -46,7 +60,6 @@ final class AppState {
     var consoleTab: ConsoleTab = .activity
     var sheet: SheetKind?
     var pendingExclude: ExcludeRequest?
-    var watchTarget: AgentWatchTarget?
     var toasts: [ToastData] = []
     var shellLog: [ShellEntry] = []
     private var toastSeq = 0
@@ -86,30 +99,13 @@ final class AppState {
     func toggleConsole() { consoleOpen.toggle(); persist() }
     func openConsole(_ tab: ConsoleTab? = nil) { consoleOpen = true; if let tab { consoleTab = tab }; persist() }
     func openSheet(_ k: SheetKind) { sheet = k }
-    func closeSheet() {
-        if sheet == .watchAgent { watchTarget = nil }
-        sheet = nil
-    }
+    func closeSheet() { sheet = nil }
     /// Ask to exclude a file from a repo's architecture scope (confirm-gated write).
     func requestExclude(repoId: String, path: String) {
         pendingExclude = ExcludeRequest(repoId: repoId, path: path)
         openSheet(.excludeFile)
     }
     func togglePalette() { sheet = (sheet == .palette) ? nil : .palette }
-    func watchAgent(_ agent: AgentInfo, repo: Repo) {
-        guard let path = agent.transcriptPath else {
-            toast("no transcript path", "this session cannot be watched yet", .neutral)
-            return
-        }
-        watchTarget = AgentWatchTarget(
-            repoName: repo.name,
-            tool: agent.tool ?? "agent",
-            kind: agent.sessionKind,
-            transcriptPath: path,
-            workflowId: agent.workflowId
-        )
-        openSheet(.watchAgent)
-    }
 
     @discardableResult
     func toast(_ title: String, _ message: String = "", _ tone: VibeTone = .info) -> Int {

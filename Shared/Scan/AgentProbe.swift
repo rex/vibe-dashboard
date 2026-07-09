@@ -13,7 +13,7 @@ import Foundation
 /// idle is COMPLETE and no longer surfaced at all (dropped by the probe).
 enum AgentState: String, Sendable, Hashable { case active, idle }
 
-enum AgentSessionKind: String, Sendable, Hashable {
+enum AgentSessionKind: String, Sendable, Hashable, Codable {
     case standard, subagent, workflow
 }
 
