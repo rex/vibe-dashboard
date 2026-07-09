@@ -3,6 +3,24 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.51.0] — 2026-07-09
+
+### Added
+- **Watch lanes**: workflow watching now renders concurrency LANES whose streams
+  continue through phase handoffs — when an agent returns and the next one picks
+  up, the same lane keeps streaming behind a loud in-stream "hop" divider (stage
+  number, the new agent's task, start time). Lane assignment replays the
+  workflow's `journal.jsonl`; convergence lands in the lowest freed lane.
+- **Named, plan-aware workflow windows**: the persisted script's `meta` literal
+  (name, description, phase titles) and the terminal `wf_<id>.json` (status,
+  summary, duration) drive the window title, a "plan: …" phase strip, real
+  "k/N agents returned" progress, and a completed badge. Lane titles fall back
+  to the agent's actual prompt when its meta.json carries no description.
+- **FSEvents push updates**: transcript writes refresh agent cards in ~1s and
+  tick watch windows in ~150ms; repo writes trigger a per-repo debounced
+  re-score (noise-filtered, echo-cooled) — no full rescan needed for a repo's
+  grade to track reality.
+
 ## [0.48.0] — 2026-07-09
 
 ### Added
