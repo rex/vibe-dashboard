@@ -13,11 +13,80 @@ enum AgentTranscriptProbe {
         return f
     }()
 
+    /// Claude sessions, collapsed to the units a human thinks in: one card per MAIN
+    /// session (its subagents/workflow children extend its liveness rather than
+    /// spawning their own cards), plus one card per live WORKFLOW (grouped by its
+    /// directory — never one card per workflow agent file). A subagent whose parent
+    /// session file is missing still surfaces on its own rather than vanishing.
     static func claudeSessions(
         root: String = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/projects"),
         now: Date
     ) -> [AgentProbe.Session] {
-        transcriptSessions(paths: jsonlFiles(under: root), tool: "claude-code", now: now)
+        var mains: [String] = []
+        var workflowAgents: [String: [String]] = [:]   // workflow dir → agent-*.jsonl
+        var subagents: [String] = []
+        for path in jsonlFiles(under: root) {
+            switch transcriptShape(path: path, tool: "claude-code").kind {
+            case .standard:
+                mains.append(path)
+            case .workflow where isAgentFile(path):
+                workflowAgents[(path as NSString).deletingLastPathComponent, default: []].append(path)
+            case .subagent where isAgentFile(path):
+                subagents.append(path)
+            default:
+                break   // journal.jsonl and other sidecars are not sessions
+            }
+        }
+
+        // Newest child write per parent session file — a main session whose workflow
+        // has been grinding for 90 minutes is still ACTIVE even if its own transcript
+        // went quiet (results only land in it when the workflow returns).
+        var childActivity: [String: Date] = [:]
+        for child in subagents + workflowAgents.values.flatMap({ $0 }) {
+            guard let parent = parentSessionFile(of: child), let m = mtime(child) else { continue }
+            if childActivity[parent].map({ m > $0 }) ?? true { childActivity[parent] = m }
+        }
+
+        var out: [AgentProbe.Session] = []
+        var liveParents = Set<String>()
+        for main in mains {
+            guard let s = session(path: main, tool: "claude-code", now: now,
+                                  descendantActivity: childActivity[main]) else { continue }
+            out.append(s)
+            liveParents.insert(main)
+        }
+        for (dir, files) in workflowAgents {
+            if let s = workflowSession(dir: dir, files: files, now: now) { out.append(s) }
+        }
+        for orphan in subagents where parentSessionFile(of: orphan).map({ !liveParents.contains($0) }) ?? true {
+            if let s = session(path: orphan, tool: "claude-code", now: now) { out.append(s) }
+        }
+        return out.sorted { $0.lastActivity > $1.lastActivity }
+    }
+
+    /// One session for a whole workflow: representative = the newest-written agent
+    /// transcript (its embedded timestamps drive lifecycle), identity = the workflow
+    /// id, so the Agents grid shows "the workflow", not eight agent-file cards.
+    static func workflowSession(dir: String, files: [String], now: Date) -> AgentProbe.Session? {
+        let newest = files
+            .filter { recentlyTouched($0, now: now) }
+            .max { (mtime($0) ?? .distantPast) < (mtime($1) ?? .distantPast) }
+        guard let newest, var s = session(path: newest, tool: "claude-code", now: now) else { return nil }
+        s.id = "claude-code:wf:" + (s.workflowId ?? (dir as NSString).lastPathComponent)
+        return s
+    }
+
+    static func isAgentFile(_ path: String) -> Bool {
+        (path as NSString).lastPathComponent.hasPrefix("agent-")
+    }
+
+    /// `…/projects/<slug>/<session>/subagents/…/agent-x.jsonl` → the parent session's
+    /// own transcript `…/projects/<slug>/<session>.jsonl`. Nil when the path has no
+    /// `subagents` ancestor.
+    static func parentSessionFile(of path: String) -> String? {
+        let parts = path.split(separator: "/").map(String.init)
+        guard let idx = parts.firstIndex(of: "subagents"), idx >= 1 else { return nil }
+        return "/" + parts[..<idx].joined(separator: "/") + ".jsonl"
     }
 
     static func codexSessions(
@@ -32,11 +101,19 @@ enum AgentTranscriptProbe {
             .sorted { $0.lastActivity > $1.lastActivity }
     }
 
-    static func session(path: String, tool: String, now: Date) -> AgentProbe.Session? {
-        guard recentlyTouched(path, now: now) else { return nil }
+    /// `descendantActivity`: the newest write among the session's child transcripts
+    /// (subagents / workflow agents). It extends the session's life and its shown
+    /// "last activity" — the parent transcript goes quiet while children work, and
+    /// idling out a session mid-workflow would be a lie.
+    static func session(path: String, tool: String, now: Date,
+                        descendantActivity: Date? = nil) -> AgentProbe.Session? {
+        let childRecent = descendantActivity
+            .map { now.timeIntervalSince($0) < AgentProbe.retentionWindow + mtimeSlack } ?? false
+        guard recentlyTouched(path, now: now) || childRecent else { return nil }
         let head = readPrefix(path, bytes: headBytes)
         let tail = readSuffix(path, bytes: tailBytes)
-        guard let last = newestTimestamp(in: tail) ?? newestTimestamp(in: head),
+        let embedded = newestTimestamp(in: tail) ?? newestTimestamp(in: head)
+        guard let last = [embedded, descendantActivity].compactMap({ $0 }).max(),
               let state = AgentProbe.lifecycle(age: now.timeIntervalSince(last)),
               let cwd = newestCwd(in: tail) ?? firstCwd(in: head),
               !cwd.isEmpty else { return nil }
@@ -125,9 +202,12 @@ enum AgentTranscriptProbe {
     }
 
     private static func recentlyTouched(_ path: String, now: Date) -> Bool {
-        guard let attrs = try? fm.attributesOfItem(atPath: path),
-              let mtime = attrs[.modificationDate] as? Date else { return false }
-        return now.timeIntervalSince(mtime) < AgentProbe.retentionWindow + mtimeSlack
+        guard let m = mtime(path) else { return false }
+        return now.timeIntervalSince(m) < AgentProbe.retentionWindow + mtimeSlack
+    }
+
+    private static func mtime(_ path: String) -> Date? {
+        (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date
     }
 
     private static func jsonlFiles(under root: String) -> [String] {

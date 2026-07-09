@@ -80,8 +80,8 @@ struct TranscriptSessionTests {
         #expect(session.lastActivity == AgentTranscriptProbe.parseTimestamp("2026-07-09T03:29:00.584Z"))
     }
 
-    @Test("claude scan recurses into subagent workflow transcripts")
-    func claudeSubagentsAreScanned() throws {
+    @Test("a workflow is ONE session card, not one per agent file")
+    func workflowCollapsesToOneSession() throws {
         let now = try #require(RelTime.iso.date(from: "2026-07-09T03:00:00Z"))
         let root = try tempDir()
         let nested = root
@@ -91,19 +91,46 @@ struct TranscriptSessionTests {
             .appendingPathComponent("workflows")
             .appendingPathComponent("wf_123")
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
-        let file = nested.appendingPathComponent("agent-a.jsonl")
-        let body = try claudeLine(
-            timestamp: "2026-07-09T02:50:00Z",
-            cwd: "/Users/dev/Code/live",
-            id: "subagent"
-        )
-        try writeTranscript(body, to: file, mtime: now)
+        for (name, ts) in [("agent-a.jsonl", "2026-07-09T02:40:00Z"),
+                           ("agent-b.jsonl", "2026-07-09T02:50:00Z"),
+                           ("agent-c.jsonl", "2026-07-09T02:55:00Z")] {
+            let body = try claudeLine(timestamp: ts, cwd: "/Users/dev/Code/live", id: "subagent")
+            try writeTranscript(body, to: nested.appendingPathComponent(name),
+                                mtime: #require(RelTime.iso.date(from: ts)))
+        }
+        try "{\"type\":\"started\",\"agentId\":\"a\"}"
+            .write(to: nested.appendingPathComponent("journal.jsonl"), atomically: true, encoding: .utf8)
 
         let sessions = AgentTranscriptProbe.claudeSessions(root: root.path, now: now)
-        #expect(sessions.map(\.id) == ["claude-code:subagent"])
+        #expect(sessions.map(\.id) == ["claude-code:wf:wf_123"])
         #expect(sessions.first?.cwd == "/Users/dev/Code/live")
         #expect(sessions.first?.kind == .workflow)
         #expect(sessions.first?.workflowId == "wf_123")
+        #expect(sessions.first?.lastActivity == RelTime.iso.date(from: "2026-07-09T02:55:00Z"))
+    }
+
+    @Test("subagents fold into their live parent session and extend its activity")
+    func subagentsFoldIntoParent() throws {
+        let now = try #require(RelTime.iso.date(from: "2026-07-09T03:00:00Z"))
+        let root = try tempDir()
+        let project = root.appendingPathComponent("project")
+        let subDir = project.appendingPathComponent("session").appendingPathComponent("subagents")
+        try FileManager.default.createDirectory(at: subDir, withIntermediateDirectories: true)
+        // Parent transcript went quiet 50 minutes ago (would be idle on its own)…
+        let parentBody = try claudeLine(timestamp: "2026-07-09T02:10:00Z",
+                                        cwd: "/Users/dev/Code/live", id: "parent")
+        try writeTranscript(parentBody, to: project.appendingPathComponent("session.jsonl"),
+                            mtime: #require(RelTime.iso.date(from: "2026-07-09T02:10:00Z")))
+        // …but its subagent wrote 1 minute ago.
+        let childBody = try claudeLine(timestamp: "2026-07-09T02:59:00Z",
+                                       cwd: "/Users/dev/Code/live", id: "child")
+        try writeTranscript(childBody, to: subDir.appendingPathComponent("agent-a.jsonl"),
+                            mtime: #require(RelTime.iso.date(from: "2026-07-09T02:59:00Z")))
+
+        let sessions = AgentTranscriptProbe.claudeSessions(root: root.path, now: now)
+        #expect(sessions.map(\.id) == ["claude-code:parent"])   // no separate subagent card
+        #expect(sessions.first?.state == .active)               // child work keeps it live
+        #expect(sessions.first?.lastActivity == RelTime.iso.date(from: "2026-07-09T02:59:00Z"))
     }
 
     @Test("plain claude subagents are distinguished from workflow agents")
