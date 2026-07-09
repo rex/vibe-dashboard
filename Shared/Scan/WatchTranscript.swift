@@ -274,11 +274,41 @@ struct WatchAgentMeta: Sendable {
         return WatchAgentMeta(agentType: obj["agentType"] as? String,
                               description: obj["description"] as? String)
     }
+
+    /// Workflow agents' meta.json carries NO description — title the lane from the
+    /// agent's actual PROMPT instead: the first meaningful line of the first user
+    /// message in its transcript. Real data over a hex id.
+    static func promptTitle(transcriptPath: String, cap: Int = 76) -> String? {
+        guard let fh = FileHandle(forReadingAtPath: transcriptPath) else { return nil }
+        defer { try? fh.close() }
+        let head = String(decoding: (try? fh.read(upToCount: 64 * 1024)) ?? Data(), as: UTF8.self)
+        for line in head.split(separator: "\n") {
+            guard let obj = WatchTranscriptParser.object(String(line)),
+                  obj["type"] as? String == "user",
+                  let message = obj["message"] as? [String: Any] else { continue }
+            let text = (message["content"] as? String)
+                ?? WatchTranscriptParser.contentString(message["content"])
+            let first = text.split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .first { !$0.isEmpty }
+            if let first { return WatchTranscriptParser.oneLine(first, cap: cap) }
+        }
+        return nil
+    }
 }
 
-/// A workflow dir's `journal.jsonl`: `started` order + per-agent `result` payloads.
-/// Gives the watch window honest lifecycle (running vs returned) and spawn order.
+/// A workflow dir's `journal.jsonl`: the ORDERED started/result event stream, plus
+/// spawn order and per-agent result payloads. Append order is chronological, which
+/// is what lets the lane replay reconstruct handoffs (agent returns → its lane is
+/// free → the next spawned agent continues that lane).
 struct WatchJournal: Sendable {
+    enum EventKind: Sendable, Hashable { case started, result }
+    struct Event: Sendable, Hashable {
+        var kind: EventKind
+        var agentId: String
+    }
+
+    var events: [Event] = []                // chronological journal lines
     var startOrder: [String] = []           // agentIds in spawn order
     var results: [String: String] = [:]     // agentId → pretty result payload
 
@@ -295,10 +325,14 @@ struct WatchJournal: Sendable {
                   let agentId = obj["agentId"] as? String else { continue }
             switch obj["type"] as? String {
             case "started":
-                if !j.startOrder.contains(agentId) { j.startOrder.append(agentId) }
+                guard !j.startOrder.contains(agentId) else { break }   // resume replays
+                j.startOrder.append(agentId)
+                j.events.append(Event(kind: .started, agentId: agentId))
             case "result":
+                guard j.results[agentId] == nil else { break }
                 j.results[agentId] = WatchTranscriptParser.clip(
                     WatchTranscriptParser.pretty(obj["result"]), limit: 4000)
+                j.events.append(Event(kind: .result, agentId: agentId))
             default: break
             }
         }

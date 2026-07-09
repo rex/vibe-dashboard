@@ -167,6 +167,48 @@ struct WatchEventRow: View {
     }
 }
 
+// MARK: - Hop divider (in-stream phase handoff)
+
+/// The lane's continuation marker: the previous agent returned and THIS agent
+/// picked the lane up. Deliberately loud — the one thing that must never be
+/// missed while watching a workflow stream.
+struct WatchHopRow: View {
+    let stage: Int
+    let title: String
+    let startedAt: Date?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.space.x1_5) {
+            HStack(spacing: Theme.space.x2) {
+                Rectangle().fill(Theme.color.accent).frame(height: 2)
+                VibeIcon("corner-down-right", size: 13, color: Theme.color.accent)
+                Text("hop · stage \(stage)")
+                    .vibeMicroLabel(9, color: Theme.color.accent)
+                    .fixedSize()
+                if let startedAt {
+                    Text(WatchClock.hms(startedAt))
+                        .font(VibeFont.mono(VibeFont.size.xxs))
+                        .foregroundStyle(Theme.color.accentDim)
+                        .monospacedDigit()
+                        .fixedSize()
+                }
+                Rectangle().fill(Theme.color.accent).frame(height: 2)
+            }
+            Text(title)
+                .font(VibeFont.mono(VibeFont.size.sm, .bold))
+                .foregroundStyle(Theme.color.textBright)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(Theme.space.x2_5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.color.okSurface)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous)
+            .strokeBorder(Theme.color.okLine, lineWidth: 1))
+        .padding(.vertical, Theme.space.x1)
+    }
+}
+
 // MARK: - Shared folding row (thinking / outcome)
 
 enum WatchFoldTone { case ghost, policy }

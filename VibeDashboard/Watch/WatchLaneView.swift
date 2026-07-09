@@ -1,23 +1,24 @@
-// WatchPaneView.swift — one full-height transcript column in the watch window:
-// header (who/what/status) + auto-following event scroll. Follow is sticky: the
-// pane tails its transcript until the user scrolls up, then a "↓ n new" chip
-// offers the way back down. No timers here — new events arrive via the model.
+// WatchLaneView.swift — one full-height LANE in the watch window: a continuous
+// stream that follows an agent through phase handoffs. Segments stack vertically
+// with an unmissable hop divider between them, so "agent 1 returned → agent 2
+// picked up" reads in-place — no pane switching. Follow is sticky: the lane tails
+// its stream until the user scrolls up, then a "↓ n new" chip offers the way back.
 
 import SwiftUI
 import AppKit
 
-struct WatchPaneView: View {
-    let pane: WatchPane
+struct WatchLaneView: View {
+    let lane: WatchLane
     let fontSize: Double
     @Binding var expanded: Set<String>
     let followSignal: Int
     let now: Date
 
     @State private var follow = true
-    @State private var unfollowedAt = 0          // event count when the user scrolled away
+    @State private var unfollowedAt = 0          // lane event total when the user scrolled away
     @State private var lastAutoScroll = Date.distantPast
 
-    private static let bottomId = "pane-bottom"
+    private static let bottomId = "lane-bottom"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,31 +32,36 @@ struct WatchPaneView: View {
         .frame(maxHeight: .infinity)
     }
 
-    // MARK: - Header
+    // MARK: - Header (describes the CURRENT segment + the lane's journey)
 
-    private var streaming: Bool { pane.isStreaming(now: now) }
+    private var current: WatchPane? { lane.current }
+    private var streaming: Bool { lane.isStreaming(now: now) }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: Theme.space.x2) {
-                if pane.phase > 0 {
-                    StatusBadge(text: "phase \(pane.phase)", tone: .info, small: true)
+                if lane.segments.count > 1 {
+                    StatusBadge(text: "stage \(lane.segments.count)", tone: .info, small: true)
                 }
-                Text(pane.title)
+                Text(current?.title ?? "—")
                     .font(VibeFont.mono(VibeFont.size.sm, .bold))
                     .foregroundStyle(Theme.color.textBright)
                     .lineLimit(1)
-                    .help(pane.title)
+                    .help(journeyHelp)
                 Spacer(minLength: Theme.space.x2)
                 status
             }
             HStack(spacing: Theme.space.x1_5) {
-                if let badge = pane.badge {
+                if let badge = current?.badge {
                     Text(badge).vibeMicroLabel(9, color: Theme.color.textMuted)
                 }
-                Text("\(pane.tail.events.count) events")
+                if lane.segments.count > 1 {
+                    Text("\(lane.segments.count) agents")
+                        .font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textFaint)
+                }
+                Text("· \(lane.eventTotal) events")
                     .font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textFaint)
-                if let last = pane.lastEventAt {
+                if let last = lane.segments.compactMap(\.lastEventAt).max() {
                     Text("· \(WatchClock.hms(last))")
                         .font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textFaint)
                 }
@@ -67,18 +73,26 @@ struct WatchPaneView: View {
         .background(Theme.color.surface2)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.color.border).frame(height: 1) }
         .contextMenu {
-            Button("Reveal transcript in Finder") {
-                NSWorkspace.shared.selectFile(pane.path, inFileViewerRootedAtPath: "")
+            ForEach(lane.segments) { seg in
+                Button("Reveal \((seg.path as NSString).lastPathComponent) in Finder") {
+                    NSWorkspace.shared.selectFile(seg.path, inFileViewerRootedAtPath: "")
+                }
             }
-            Button("Copy transcript path") {
+            Button("Copy current transcript path") {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(pane.path, forType: .string)
+                NSPasteboard.general.setString(current?.path ?? "", forType: .string)
             }
         }
     }
 
+    private var journeyHelp: String {
+        lane.segments.enumerated()
+            .map { "stage \($0.offset + 1): \($0.element.title)" }
+            .joined(separator: "\n")
+    }
+
     @ViewBuilder private var status: some View {
-        if pane.done {
+        if lane.done {
             HStack(spacing: Theme.space.x1) {
                 VibeIcon("check-circle", size: 11, color: Theme.color.ok)
                 Text("returned").vibeMicroLabel(9, color: Theme.color.ok)
@@ -93,29 +107,38 @@ struct WatchPaneView: View {
         }
     }
 
-    // MARK: - Event scroll (sticky follow)
+    // MARK: - Continuous stream (segments + hop dividers), sticky follow
 
     private var events: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Theme.space.x2) {
-                    if pane.tail.bootstrapped || pane.tail.trimmed > 0 {
-                        trimNote
-                    }
-                    ForEach(pane.tail.events) { event in
-                        WatchEventRow(event: event, rowId: pane.id + "·" + event.id,
-                                      fontSize: fontSize, expanded: $expanded)
-                    }
-                    if let outcome = pane.outcome {
-                        WatchOutcomeRow(body: outcome, rowId: pane.id + "·outcome",
-                                        fontSize: fontSize, expanded: $expanded)
+                    ForEach(Array(lane.segments.enumerated()), id: \.element.id) { idx, seg in
+                        if idx > 0 {
+                            WatchHopRow(stage: idx + 1, title: seg.title,
+                                        startedAt: seg.firstEventAt)
+                        }
+                        if seg.tail.bootstrapped || seg.tail.trimmed > 0 {
+                            trimNote(seg)
+                        }
+                        ForEach(seg.tail.events) { event in
+                            WatchEventRow(event: event, rowId: seg.id + "·" + event.id,
+                                          fontSize: fontSize, expanded: $expanded)
+                        }
+                        if let outcome = seg.outcome {
+                            WatchOutcomeRow(body: outcome, rowId: seg.id + "·outcome",
+                                            fontSize: fontSize, expanded: $expanded)
+                        }
                     }
                     bottomSentinel
                 }
                 .padding(Theme.space.x3)
             }
             .defaultScrollAnchor(.bottom)
-            .onChange(of: pane.tail.seq) {
+            .onChange(of: lane.eventTotal) {
+                if follow { autoScroll(proxy) }
+            }
+            .onChange(of: lane.segments.count) {   // a hop landed — keep following into it
                 if follow { autoScroll(proxy) }
             }
             .onChange(of: followSignal) {
@@ -140,7 +163,7 @@ struct WatchPaneView: View {
             .onDisappear {
                 if Date().timeIntervalSince(lastAutoScroll) > 0.6 {
                     follow = false
-                    unfollowedAt = pane.tail.seq
+                    unfollowedAt = lane.eventTotal
                 }
             }
     }
@@ -151,7 +174,7 @@ struct WatchPaneView: View {
     }
 
     private func newEventsChip(_ proxy: ScrollViewProxy) -> some View {
-        let fresh = max(0, pane.tail.seq - unfollowedAt)
+        let fresh = max(0, lane.eventTotal - unfollowedAt)
         return Button {
             follow = true
             autoScroll(proxy)
@@ -172,13 +195,13 @@ struct WatchPaneView: View {
         .padding(.bottom, Theme.space.x2_5)
     }
 
-    /// Honest disclosure that the pane starts mid-stream (huge transcript) or that
+    /// Honest disclosure that a segment starts mid-stream (huge transcript) or that
     /// the retention cap dropped early rows — never silently pretend completeness.
-    private var trimNote: some View {
+    private func trimNote(_ seg: WatchPane) -> some View {
         HStack(spacing: Theme.space.x1_5) {
             VibeIcon("history", size: 10, color: Theme.color.textGhost)
-            Text(pane.tail.trimmed > 0
-                 ? "showing the latest \(pane.tail.events.count) events · \(pane.tail.trimmed) earlier trimmed"
+            Text(seg.tail.trimmed > 0
+                 ? "showing the latest \(seg.tail.events.count) events · \(seg.tail.trimmed) earlier trimmed"
                  : "tailing from the last \(WatchTailer.bootstrapBytes / 1024) KB of a large transcript")
                 .font(VibeFont.mono(VibeFont.size.xxs))
                 .foregroundStyle(Theme.color.textGhost)

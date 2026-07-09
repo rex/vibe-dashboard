@@ -199,7 +199,7 @@ struct WatchDiscoveryTests {
         #expect(j.results["a2"] == nil)
     }
 
-    @Test("workflow discovery: panes titled from meta.json, lifecycle from journal")
+    @Test("workflow discovery: lanes titled from meta.json, lifecycle from journal")
     func workflowDiscovery() throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("vibe-wf-" + UUID().uuidString)
@@ -219,37 +219,78 @@ struct WatchDiscoveryTests {
                                       kind: .workflow,
                                       transcriptPath: dir.appendingPathComponent("agent-a1.jsonl").path,
                                       workflowId: "wf_x")
-        let panes = AgentWatchModel.discoverPanes(target: target, existing: [])
-        #expect(panes.count == 2)
-        let p1 = try #require(panes.first { $0.path.hasSuffix("agent-a1.jsonl") })
+        let snap = AgentWatchModel.discoverLanes(target: target,
+                                                 prior: AgentWatchModel.Snapshot(lanes: [], meta: WatchWorkflowMeta()))
+        #expect(snap.lanes.count == 2)   // both agents still running in parallel → 2 lanes
+        #expect(snap.returned == 1 && snap.total == 2)
+        let all = snap.lanes.flatMap(\.segments)
+        let p1 = try #require(all.first { $0.path.hasSuffix("agent-a1.jsonl") })
         #expect(p1.title == "Audit the gates")
         #expect(p1.badge == "general-purpose")
         #expect(p1.done)
         #expect(p1.outcome?.contains("done") == true)
-        let p2 = try #require(panes.first { $0.path.hasSuffix("agent-a2.jsonl") })
+        let p2 = try #require(all.first { $0.path.hasSuffix("agent-a2.jsonl") })
         #expect(p2.title == "agent a2")
         #expect(!p2.done)
-        #expect(p1.order == 0 && p2.order == 1)
     }
 
-    @Test("phase grouping: parallel wave together, later start = next phase")
-    func phaseAssignment() throws {
-        let t0 = Date(timeIntervalSince1970: 1_000_000)
-        func pane(_ path: String, offset: TimeInterval?, main: Bool = false) -> WatchPane {
-            var p = WatchPane(path: path, title: path, badge: nil)
-            p.isMain = main
-            if let offset {
-                p.tail.events = [WatchEvent(id: "e1", kind: .assistant, title: "assistant",
-                                            body: "x", timestamp: t0.addingTimeInterval(offset))]
-            }
-            return p
+    @Test("lane replay: a returned agent's lane is continued by the next spawn")
+    func laneHandoff() throws {
+        // Wave 1: a, b, c in parallel. a returns → a2 continues lane 0.
+        // b returns → b2 continues lane 1. c never returns; synth starts after
+        // a2/b2 return and takes the lowest freed lane (0) — convergence.
+        let events: [WatchJournal.Event] = [
+            .init(kind: .started, agentId: "a"), .init(kind: .started, agentId: "b"),
+            .init(kind: .started, agentId: "c"),
+            .init(kind: .result, agentId: "a"), .init(kind: .started, agentId: "a2"),
+            .init(kind: .result, agentId: "b"), .init(kind: .started, agentId: "b2"),
+            .init(kind: .result, agentId: "a2"), .init(kind: .result, agentId: "b2"),
+            .init(kind: .started, agentId: "synth"),
+        ]
+        let lanes = AgentWatchModel.assignLanes(events: events)
+        #expect(lanes == [["a", "a2", "synth"], ["b", "b2"], ["c"]])
+    }
+
+    @Test("lane replay: duplicate started (resume) is idempotent; unknown result ignored")
+    func laneReplayIdempotent() throws {
+        let events: [WatchJournal.Event] = [
+            .init(kind: .started, agentId: "a"), .init(kind: .started, agentId: "a"),
+            .init(kind: .result, agentId: "ghost"),
+            .init(kind: .result, agentId: "a"), .init(kind: .started, agentId: "b"),
+        ]
+        #expect(AgentWatchModel.assignLanes(events: events) == [["a", "b"]])
+    }
+
+    @Test("workflow plan meta parses from the persisted script literal")
+    func scriptMetaParses() throws {
+        let script = """
+        // header comment
+        export const meta = {
+          name: 'vibe-remediation-wave1',
+          description: 'Tier-0/3 trust fixes: self-integrity gate+CI, de-fabricate panels',
+          phases: [
+            { title: 'Fix', detail: '3 file-disjoint slices in parallel' },
+            { title: 'Verify', detail: 'build + test gate' },
+          ],
         }
-        let phased = AgentWatchModel.assignPhases([
-            pane("main", offset: 0, main: true),
-            pane("a", offset: 0.2), pane("b", offset: 1.1),   // same wave (< 5s apart)
-            pane("c", offset: 40),                            // next wave
-        ])
-        #expect(phased.map(\.phase) == [0, 1, 1, 2])
+        const COMMON = `whatever { braces } inside a template`
+        """
+        let meta = WatchWorkflowMeta.parseScriptMeta(script)
+        #expect(meta.name == "vibe-remediation-wave1")
+        #expect(meta.description?.hasPrefix("Tier-0/3 trust fixes") == true)
+        #expect(meta.phases == ["Fix", "Verify"])
+        #expect(!meta.isTerminal)
+    }
+
+    @Test("script meta handles escaped quotes and double-quoted strings")
+    func scriptMetaEscapes() throws {
+        let script = """
+        export const meta = { name: "wf-x", description: 'it\\'s fine', phases: [] }
+        """
+        let meta = WatchWorkflowMeta.parseScriptMeta(script)
+        #expect(meta.name == "wf-x")
+        #expect(meta.description == "it's fine")
+        #expect(meta.phases.isEmpty)
     }
 
     @Test("target from a session without a transcript is refused")
@@ -258,5 +299,48 @@ struct WatchDiscoveryTests {
         agent.tool = "aider"
         let repo = Repo(id: "r", name: "r", path: "~/Code/r", absolutePath: "~/Code/r")
         #expect(AgentWatchTarget(agent: agent, repo: repo) == nil)
+    }
+
+    @Test("lane titles fall back to the agent's prompt when meta has no description")
+    func promptTitleFallback() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vibe-title-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("agent-x.jsonl")
+        try #"{"type":"user","agentId":"x","message":{"role":"user","content":"\nREPO: /x. You are the VERIFY stage.\nRun make test."}}"#
+            .write(to: file, atomically: true, encoding: .utf8)
+        #expect(WatchAgentMeta.promptTitle(transcriptPath: file.path)
+                == "REPO: /x. You are the VERIFY stage.")
+        #expect(WatchAgentMeta.promptTitle(transcriptPath: "/nonexistent") == nil)
+    }
+}
+
+@Suite("fsevents repo mapping")
+struct RepoEventMapperTests {
+    private let repos = [
+        (id: "umbrella", absPath: "/Users/p/Code/eco"),
+        (id: "child", absPath: "/Users/p/Code/eco/api"),
+        (id: "other", absPath: "/Users/p/Code/other"),
+    ]
+
+    @Test("deepest repo wins for nested paths")
+    func deepestRepo() throws {
+        #expect(RepoEventMapper.repoId(for: "/Users/p/Code/eco/api/src/main.go", repos: repos) == "child")
+        #expect(RepoEventMapper.repoId(for: "/Users/p/Code/eco/README.md", repos: repos) == "umbrella")
+        #expect(RepoEventMapper.repoId(for: "/Users/p/Code/unrelated/x", repos: repos) == nil)
+    }
+
+    @Test("noise never triggers: build dirs, .DS_Store, .git internals except index/HEAD/refs")
+    func noiseFiltering() throws {
+        #expect(RepoEventMapper.isNoise("/r/node_modules/x/index.js"))
+        #expect(RepoEventMapper.isNoise("/r/build/out.o"))
+        #expect(RepoEventMapper.isNoise("/r/.DS_Store"))
+        #expect(RepoEventMapper.isNoise("/r/.git/objects/ab/cdef"))
+        #expect(RepoEventMapper.isNoise("/r/.git/logs/HEAD"))
+        #expect(!RepoEventMapper.isNoise("/r/.git/index"))
+        #expect(!RepoEventMapper.isNoise("/r/.git/HEAD"))
+        #expect(!RepoEventMapper.isNoise("/r/.git/refs/heads/main"))
+        #expect(!RepoEventMapper.isNoise("/r/src/main.swift"))
+        #expect(RepoEventMapper.repoId(for: "/Users/p/Code/eco/api/node_modules/a.js", repos: repos) == nil)
     }
 }

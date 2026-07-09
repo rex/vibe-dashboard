@@ -42,6 +42,7 @@ final class FleetStore {
         roots = r
         scanner = FleetScanner(roots: r)
         UserDefaults.standard.set(r, forKey: "vibe.roots")
+        if repoFsWatcher != nil { startFsMonitors() }   // re-aim the streams at the new roots
     }
 
     func rescan() async {
@@ -115,6 +116,78 @@ final class FleetStore {
         }
     }
     func stopAgentMonitor() { agentMonitor?.cancel(); agentMonitor = nil }
+
+    // ---- FSEvents: push-based updates (the 30s poll stays as the safety net) ----
+    private var agentFsWatcher: FSEventsWatcher?
+    private var repoFsWatcher: FSEventsWatcher?
+    private var agentFsDebounce: Task<Void, Never>?
+    private var repoFsDebounce: [String: Task<Void, Never>] = [:]
+    private var repoRescanCooldown: [String: Date] = [:]
+
+    /// Watch the agent transcript stores and the scan roots. Transcript writes →
+    /// near-instant `refreshAgents`; repo writes → per-repo debounced
+    /// `rescan(repoId:)`, so a commit / branch move / file edit re-scores JUST that
+    /// repo seconds later — no full sweep. FSEvents streams are kernel-coalesced
+    /// per directory TREE (no per-file descriptors), so three streams cover
+    /// everything at negligible cost.
+    func startFsMonitors() {
+        stopFsMonitors()
+        let home = NSHomeDirectory()
+        agentFsWatcher = FSEventsWatcher(
+            paths: [home + "/.claude/projects", home + "/.codex/sessions"],
+            latency: 0.8) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.debouncedAgentRefresh() }
+        }
+        repoFsWatcher = FSEventsWatcher(
+            paths: roots.map { ($0 as NSString).expandingTildeInPath },
+            latency: 2.0) { [weak self] paths in
+            Task { @MainActor [weak self] in self?.handleRepoEvents(paths) }
+        }
+    }
+    func stopFsMonitors() {
+        agentFsWatcher?.stop(); agentFsWatcher = nil
+        repoFsWatcher?.stop(); repoFsWatcher = nil
+    }
+
+    private func debouncedAgentRefresh() {
+        agentFsDebounce?.cancel()
+        agentFsDebounce = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            await self?.refreshAgents()
+        }
+    }
+
+    private func handleRepoEvents(_ paths: [String]) {
+        let repoList = rawFleet.repos.map {
+            (id: $0.id, absPath: ($0.absolutePath as NSString).expandingTildeInPath)
+        }
+        guard !repoList.isEmpty else { return }
+        var hit = Set<String>()
+        for path in paths {
+            if let id = RepoEventMapper.repoId(for: path, repos: repoList) { hit.insert(id) }
+        }
+        for id in hit { scheduleRepoRescan(id) }
+    }
+
+    /// Trailing debounce per repo, with a post-rescan cooldown: the rescan's own
+    /// `git status` may refresh `.git/index` and echo one event back — without the
+    /// cooldown that echo would re-trigger forever.
+    private func scheduleRepoRescan(_ id: String, delay: TimeInterval = 2.5) {
+        if let last = repoRescanCooldown[id], Date().timeIntervalSince(last) < 3 { return }
+        repoFsDebounce[id]?.cancel()
+        repoFsDebounce[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            if self.isScanning {                       // a sweep is running — retry after it
+                self.scheduleRepoRescan(id, delay: 3)
+                return
+            }
+            self.repoFsDebounce[id] = nil
+            self.repoRescanCooldown[id] = Date()
+            await self.rescan(repoId: id)
+        }
+    }
 
     /// Re-detect live agent sessions and update ONLY the agent field on each repo — no
     /// git/census/docs re-probe. A COMPLETE session (> 1h idle, dropped by the probe)

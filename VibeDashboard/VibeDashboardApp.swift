@@ -23,8 +23,14 @@ struct VibeDashboardApp: App {
                 .preferredColorScheme(.dark)
                 // Monitor FIRST, then the fleet scan: agent detection must never be
                 // held hostage by a slow (or wedged) rescan — that ordering is exactly
-                // what kept the monitor from ever starting when a scan hung.
-                .task { store.startAgentMonitor(); await store.rescan() }
+                // what kept the monitor from ever starting when a scan hung. FSEvents
+                // makes agent cards + per-repo re-scores push-based; the 30s poll
+                // stays as the safety net.
+                .task {
+                    store.startAgentMonitor()
+                    store.startFsMonitors()
+                    await store.rescan()
+                }
                 // Cmd-tabbing back in refreshes the live-agent list immediately —
                 // the 30s cadence covers the background; activation covers "I'm looking".
                 .onReceive(NotificationCenter.default.publisher(

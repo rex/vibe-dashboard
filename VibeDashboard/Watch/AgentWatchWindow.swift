@@ -33,7 +33,14 @@ struct AgentWatchWindow: View {
 
     // MARK: - Toolbar
 
-    private var anyStreaming: Bool { model.panes.contains { $0.isStreaming(now: model.now) } }
+    private var anyStreaming: Bool { model.lanes.contains { $0.isStreaming(now: model.now) } }
+
+    /// Workflow windows are NAMED from the plan the orchestrator persisted
+    /// (workflows/scripts/<name>-<wfId>.js); everything else uses the repo.
+    private var headline: String { model.workflowMeta.name ?? target.repoName }
+    private var subline: String {
+        model.workflowMeta.description ?? WatchTranscriptParser.abbreviateHome(target.repoPath)
+    }
 
     private var toolbar: some View {
         HStack(spacing: Theme.space.x3) {
@@ -43,25 +50,24 @@ struct AgentWatchWindow: View {
                        color: anyStreaming ? Theme.color.ok : Theme.color.textFaint, size: 12)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: Theme.space.x2) {
-                    Text(target.repoName)
+                    Text(headline)
                         .font(VibeFont.mono(VibeFont.size.md, .bold))
                         .foregroundStyle(Theme.color.textBright)
                         .lineLimit(1)
                     Pill(text: kindLabel, tone: kindTone, icon: kindIcon)
-                    if let wf = target.workflowId {
-                        Text(wf).font(VibeFont.mono(VibeFont.size.xxs))
-                            .foregroundStyle(Theme.color.textFaint).lineLimit(1)
+                    if target.kind == .workflow {
+                        progressBadge
                     }
                 }
-                Text(WatchTranscriptParser.abbreviateHome(target.repoPath))
+                Text(subline)
                     .font(VibeFont.mono(VibeFont.size.xxs))
                     .foregroundStyle(Theme.color.textFaint)
                     .lineLimit(1).truncationMode(.middle)
+                    .help(subline)
             }
             Spacer(minLength: Theme.space.x2)
 
-            Text("\(model.panes.count) pane\(model.panes.count == 1 ? "" : "s")")
-                .vibeMicroLabel(9, color: Theme.color.textGhost)
+            phaseStrip
 
             toolbarButton("arrow-down", help: "Follow all panes (snap to the live tail)") {
                 followSignal += 1
@@ -115,40 +121,73 @@ struct AgentWatchWindow: View {
 
     private func allToolRowIds() -> Set<String> {
         var ids: Set<String> = []
-        for pane in model.panes {
-            for e in pane.tail.events where e.kind == .tool || e.kind == .thinking {
-                ids.insert(pane.id + "·" + e.id)
+        for lane in model.lanes {
+            for seg in lane.segments {
+                for e in seg.tail.events where e.kind == .tool || e.kind == .thinking {
+                    ids.insert(seg.id + "·" + e.id)
+                }
+                if seg.outcome != nil { ids.insert(seg.id + "·outcome") }
             }
-            if pane.outcome != nil { ids.insert(pane.id + "·outcome") }
         }
         return ids
     }
 
-    // MARK: - Panes
+    /// Real progress: journal results over agents known so far — never a guess.
+    @ViewBuilder private var progressBadge: some View {
+        if model.agentTotal > 0 {
+            let done = model.returnedCount == model.agentTotal
+            Text("\(model.returnedCount)/\(model.agentTotal) returned")
+                .font(VibeFont.mono(VibeFont.size.xxs, .medium))
+                .foregroundStyle(done ? Theme.color.ok : Theme.color.textMuted)
+                .monospacedDigit()
+            if model.workflowMeta.status == "completed", let ms = model.workflowMeta.durationMs {
+                StatusBadge(text: "completed · \(RelTime.compact(Double(ms) / 1000))",
+                            tone: .ok, small: true)
+            }
+        }
+    }
+
+    /// The PLAN's phase titles from the persisted script meta — shown as the
+    /// workflow's intent, not asserted live state (loops/dynamic scripts may
+    /// diverge; the lanes' hop dividers carry the real transitions).
+    @ViewBuilder private var phaseStrip: some View {
+        if !model.workflowMeta.phases.isEmpty {
+            HStack(spacing: Theme.space.x1) {
+                Text("plan").vibeMicroLabel(8, color: Theme.color.textGhost)
+                ForEach(Array(model.workflowMeta.phases.enumerated()), id: \.offset) { idx, title in
+                    if idx > 0 {
+                        VibeIcon("chevron-right", size: 9, color: Theme.color.textGhost)
+                    }
+                    Text(title)
+                        .font(VibeFont.mono(VibeFont.size.xxs))
+                        .foregroundStyle(Theme.color.textMuted)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    // MARK: - Lanes
 
     private var panesArea: some View {
         GeometryReader { geo in
-            if model.panes.isEmpty {
+            if model.lanes.isEmpty {
                 EmptyState(icon: "radar", tone: .neutral,
                            text: "waiting for transcript events…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 let pad = Theme.space.x3
                 let gap = Theme.space.x2_5
-                let hops = CGFloat(hopCount())
-                let n = CGFloat(model.panes.count)
-                let avail = geo.size.width - pad * 2 - gap * (n - 1) - hops * (34 + gap)
-                let paneW = max(440, avail / n)
+                let n = CGFloat(model.lanes.count)
+                let avail = geo.size.width - pad * 2 - gap * (n - 1)
+                let laneW = max(440, avail / n)
                 ScrollView(.horizontal, showsIndicators: true) {
                     HStack(alignment: .top, spacing: gap) {
-                        ForEach(Array(model.panes.enumerated()), id: \.element.id) { idx, pane in
-                            if idx > 0, pane.phase != model.panes[idx - 1].phase {
-                                WatchHopDivider(phase: pane.phase)
-                            }
-                            WatchPaneView(pane: pane, fontSize: fontSize,
+                        ForEach(model.lanes) { lane in
+                            WatchLaneView(lane: lane, fontSize: fontSize,
                                           expanded: $expanded, followSignal: followSignal,
                                           now: model.now)
-                                .frame(width: paneW)
+                                .frame(width: laneW)
                         }
                     }
                     .padding(pad)
@@ -156,11 +195,6 @@ struct AgentWatchWindow: View {
                 }
             }
         }
-    }
-
-    private func hopCount() -> Int {
-        guard model.panes.count > 1 else { return 0 }
-        return zip(model.panes, model.panes.dropFirst()).filter { $0.phase != $1.phase }.count
     }
 
     private var kindLabel: String {
@@ -186,26 +220,3 @@ struct AgentWatchWindow: View {
     }
 }
 
-/// The between-pane "hop" marker: the workflow moved to its next phase — a new
-/// agent (or wave) picked up where the previous one returned.
-struct WatchHopDivider: View {
-    let phase: Int
-
-    var body: some View {
-        VStack(spacing: Theme.space.x2) {
-            Rectangle().fill(Theme.color.borderStrong).frame(width: 1)
-                .frame(maxHeight: .infinity)
-            VibeIcon("corner-down-right", size: 15, color: Theme.color.accent)
-            Text("hop")
-                .vibeMicroLabel(9, color: Theme.color.accent)
-            Text("\(phase)")
-                .font(VibeFont.mono(VibeFont.size.sm, .bold))
-                .foregroundStyle(Theme.color.accent)
-                .monospacedDigit()
-            Rectangle().fill(Theme.color.borderStrong).frame(width: 1)
-                .frame(maxHeight: .infinity)
-        }
-        .frame(width: 34)
-        .frame(maxHeight: .infinity)
-    }
-}
