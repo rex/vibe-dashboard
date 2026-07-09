@@ -95,18 +95,22 @@ final class FleetStore {
 
     // ---- background agent monitor (lightweight — no full rescan) ----
     private var agentMonitor: Task<Void, Never>?
+    private var agentRefreshInFlight = false
 
     /// Auto-refresh ONLY live-agent detection every `interval` seconds — Pierce's ask:
-    /// agents update in the background without a full app rescan. Cancellable and idle
-    /// between ticks (Task.sleep, never a repeatForever/CPU spinner). Started once from
-    /// the app root's `.task`.
-    func startAgentMonitor(interval: TimeInterval = 120) {
+    /// agents update in the background without a full app rescan. Ticks IMMEDIATELY on
+    /// start (a fresh launch must not wait a full interval for its first agent read),
+    /// then sleeps between ticks (Task.sleep, never a repeatForever/CPU spinner).
+    /// Started from the app root BEFORE the initial rescan is awaited, so a slow — or
+    /// wedged — fleet scan can never keep agent detection from running (the original
+    /// "auto-refresh doesn't work": the monitor start was sequenced AFTER a rescan
+    /// that hung, so it never started at all).
+    func startAgentMonitor(interval: TimeInterval = 30) {
         guard agentMonitor == nil else { return }
         agentMonitor = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(interval))
-                guard !Task.isCancelled else { break }
                 await self?.refreshAgents()
+                try? await Task.sleep(for: .seconds(interval))
             }
         }
     }
@@ -117,7 +121,12 @@ final class FleetStore {
     /// clears its repo's agent. All sessions + measured work are gathered up front
     /// (async), then applied in one synchronous main-actor pass against the CURRENT
     /// rawFleet — so a full rescan that completed during the awaits is never clobbered.
+    /// Coalesced: a tick that lands while one is still probing is dropped, not queued
+    /// (the in-flight pass already reads the freshest state).
     func refreshAgents(now: Date = Date()) async {
+        guard !agentRefreshInFlight else { return }
+        agentRefreshInFlight = true
+        defer { agentRefreshInFlight = false }
         let sessions = await AgentProbe.sessions(now: now)
         var work: [String: AgentProbe.WorkStat] = [:]
         for s in sessions { work[s.id] = await AgentProbe.workStat(cwd: s.cwd, now: now) }
