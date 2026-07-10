@@ -3,6 +3,20 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.80.0] — 2026-07-10
+
+### Added
+- **Public-facing polish**: hero README — real fleet screenshot, feature tour,
+  `VIBE.yaml` harness documentation, install-from-Releases — plus a GitHub
+  social-preview card (`docs/social-preview.png`) rendered from the design
+  system's own tokens, typefaces, and icon geometry.
+
+### Changed
+- **Git history rewritten pre-publish**: internal hostnames, team IDs, home
+  paths, and org names scrubbed from every blob and commit message; local dev
+  journals purged from history. Commit count and the shipped tree preserved
+  exactly (HEAD tree hash byte-identical before/after).
+
 ## [0.78.0] — 2026-07-10
 
 ### Fixed
