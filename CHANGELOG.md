@@ -3,6 +3,27 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.72.0] — 2026-07-10
+
+### Fixed
+- **The archived app was silently misconfigured — surfaced by notarization.**
+  An xcodegen gotcha: when a target's `settings:` block also carries `groups:`,
+  every sibling build-setting key is DROPPED unless nested under `base:`. So
+  archives had been building with the derived (wrong) bundle id
+  `com.piercemoore.VibeDashboard`, no custom `Info.plist`, no entitlements, and
+  no hardened runtime. Nesting the block under `base:` restores all of it:
+  correct `com.piercemoore.vibe`, the un-sandboxed + network-client
+  entitlements, and hardened runtime — the last being a notarization
+  prerequisite (Apple's first rejection: "does not have the hardened runtime
+  enabled"). `make release` now yields a notarized, stapled,
+  Gatekeeper-accepted universal DMG (`spctl` → "Notarized Developer ID").
+  Note: the bundle-id correction means locally-stored prefs/waivers (keyed by
+  bundle id in `UserDefaults`) reset once — the identity is correct now.
+- Release preflight now asserts the hardened-runtime flag on the exported app
+  *before* the notary round-trip. The check captures the signature and matches
+  against the string rather than `codesign | grep -q`, which trips SIGPIPE under
+  `set -o pipefail` and false-failed on a flag that was present.
+
 ## [0.70.0] — 2026-07-10
 
 ### Added

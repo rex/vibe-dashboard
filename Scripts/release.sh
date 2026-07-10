@@ -139,7 +139,18 @@ case "${1:-full}" in
     app="$(archive_and_export)"
     say "verifying signature + hardened runtime…"
     codesign --verify --deep --strict --verbose=2 "$app"
-    codesign -dv --verbose=4 "$app" 2>&1 | grep -i 'flags\|Authority=Developer ID' || true
+    # Capture once, then match against the string — piping codesign straight into
+    # `grep -q` under `set -o pipefail` makes codesign take SIGPIPE when grep closes
+    # the pipe early, which falsely trips the check even when the flag IS present.
+    sig="$(codesign -dvv "$app" 2>&1 || true)"
+    grep -iE 'flags=|Authority=Developer ID App' <<<"$sig" || true
+    # Fail HERE, not after a multi-minute notary round-trip, if the runtime flag is
+    # missing — that's exactly what a dropped ENABLE_HARDENED_RUNTIME produces, and
+    # the notary service rejects it with "does not have the hardened runtime enabled".
+    if ! grep -Eq 'flags=0x[0-9a-f]+\([^)]*runtime' <<<"$sig"; then
+      die "hardened runtime is NOT set on the app — notarization would reject it. Check ENABLE_HARDENED_RUNTIME in project.yml (it must be under settings.base)."
+    fi
+    ok "hardened runtime present"
 
     # 1) Notarize + staple the APP itself (via a zip) so it verifies OFFLINE.
     zip="$DIST/VibeDashboard.zip"; rm -f "$zip"

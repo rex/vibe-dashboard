@@ -59,15 +59,21 @@ targets:
           - "**/.DS_Store"
     settings:
       groups: [common]
-      PRODUCT_BUNDLE_IDENTIFIER: com.piercemoore.vibe
-      PRODUCT_NAME: VibeDashboard
-      INFOPLIST_FILE: VibeDashboard/Info.plist
-      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-      ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-      CODE_SIGN_ENTITLEMENTS: VibeDashboard/VibeDashboard.entitlements
-      LSAPPLICATIONCATEGORYTYPE: public.app-category.developer-tools
-      ENABLE_HARDENED_RUNTIME: 'YES'
-      COMBINE_HIDPI_IMAGES: 'YES'
+      # These MUST be nested under `base:`. When a settings block also carries
+      # `groups:`, xcodegen switches to structured mode and SILENTLY DROPS every
+      # sibling build-setting key — which for a long time meant the archived app
+      # had no custom Info.plist, no entitlements, no hardened runtime, and the
+      # derived (wrong) bundle id com.piercemoore.VibeDashboard.
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.piercemoore.vibe
+        PRODUCT_NAME: VibeDashboard
+        INFOPLIST_FILE: VibeDashboard/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_ENTITLEMENTS: VibeDashboard/VibeDashboard.entitlements
+        LSAPPLICATIONCATEGORYTYPE: public.app-category.developer-tools
+        ENABLE_HARDENED_RUNTIME: 'YES'
+        COMBINE_HIDPI_IMAGES: 'YES'
     dependencies:
       - package: Yams
     scheme:
@@ -92,7 +98,8 @@ targets:
       - path: Tests/VibeDashboardTests
     settings:
       groups: [common]
-      PRODUCT_BUNDLE_IDENTIFIER: com.piercemoore.vibe.tests
-      GENERATE_INFOPLIST_FILE: 'YES'
+      base:   # see the app target — sibling keys are dropped unless under `base:`
+        PRODUCT_BUNDLE_IDENTIFIER: com.piercemoore.vibe.tests
+        GENERATE_INFOPLIST_FILE: 'YES'
     dependencies:
       - target: VibeDashboard
