@@ -3,6 +3,30 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.55.0] — 2026-07-09
+
+### Fixed
+- **CPU burn + phantom "hung" scan** (sampled live: 16 fleet reassemblies in
+  5s): agent refreshes now gate on meaningful change instead of every
+  transcript append; FSEvents refreshes floor at 5s; live-agent repos debounce
+  re-probes at 10s; targeted rescans no longer light the global "scanning"
+  indicator.
+- **Waivers now affect the grade**: a waived finding leaves the feed AND its
+  weight leaves compliance/health instantly, per-file for god-files; it stays
+  disclosed in the waived list and returns on expiry.
+- `.npmrc`/`.netrc`/`.pypirc` are flagged as secrets only when their content
+  actually carries credentials.
+- Worktree prune button promises only what the guard will do: "Prune N safe",
+  with abandoned-but-unpushed worktrees explicitly noted as kept.
+
+### Added
+- **"VIBE only" toolbar toggle** (persisted): show — and count — only
+  VIBE.yaml-instrumented repos.
+- App opens on the Fleet view every launch; stat tiles centered and sized to
+  fill one row; tooltips across gates, tiles, docs/agent cells; live-agent
+  pulse animates again (active only); backfill multi-select records with one
+  VIBE.yaml commit per repo.
+
 ## [0.53.0] — 2026-07-09
 
 ### Changed
