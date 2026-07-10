@@ -2,4 +2,4 @@
 # MARKETING_VERSION = MAJOR.(MINOR_BASE + commits-since-VERSION-last-touched)
 # Bump MAJOR by hand (and reset MINOR_BASE) for marketing-significant releases.
 MAJOR=0
-MINOR_BASE=64
+MINOR_BASE=65
