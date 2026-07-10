@@ -7,7 +7,8 @@ private enum Col {
     static let docs: CGFloat = 96, policy: CGFloat = 64, state: CGFloat = 104
 }
 
-func complianceTone(_ c: Int) -> VibeTone { c >= 95 ? .ok : c >= 80 ? .warn : .danger }
+// Aligned with Derive.healthBand: ≥95 clean, 60–94 drifting, <60 in trouble.
+func complianceTone(_ c: Int) -> VibeTone { c >= 95 ? .ok : c >= 60 ? .warn : .danger }
 
 struct FleetView: View {
     @Environment(AppState.self) private var app
@@ -23,7 +24,10 @@ struct FleetView: View {
                 }
 
                 VibePanel(glow: t.danger == 0, flushBody: true) {
-                    let cols = [GridItem(.adaptive(minimum: 150), spacing: 1)]
+                    // Compact tiles: 108pt minimum + StatTile's dense mode keeps all
+                    // nine on one row at normal window widths (they were forcing the
+                    // window comically wide).
+                    let cols = [GridItem(.adaptive(minimum: 108), spacing: 1)]
                     LazyVGrid(columns: cols, spacing: 1) {
                         StatTile(value: "\(t.repos)", label: "repos", tone: .neutral, icon: "folder-git-2")
                         StatTile(value: "\(t.compliance)", unit: "%", label: "compliance", tone: complianceTone(t.compliance), icon: "gauge")
@@ -39,12 +43,16 @@ struct FleetView: View {
                 }
 
                 VibePanel(flushBody: true) {
+                    // Same filesystem shape as the sidebar: structural group dirs are
+                    // inert header rows; repos/workspaces indent to their real depth.
                     VStack(spacing: 0) {
                         headerRow
-                        ForEach(store.fleet.tree) { node in
-                            if let r = store.fleet.byId[node.repoId] {
+                        ForEach(store.fleet.sidebarTree) { node in
+                            if node.kind == .group {
+                                GroupTableRow(node: node)
+                            } else if let r = store.fleet.byId[node.repoId ?? ""] {
                                 if r.isWorkspace {
-                                    WorkspaceTableRow(ws: r) { app.openRepo(r.id) }
+                                    WorkspaceTableRow(ws: r, depth: node.depth) { app.openRepo(r.id) }
                                 } else {
                                     RepoTableRow(repo: r, depth: node.depth) { app.openRepo(r.id) }
                                 }
@@ -129,6 +137,10 @@ private struct RepoTableRow: View {
             Text("\(repo.compliance)%").font(VibeFont.mono(VibeFont.size.md, .bold))
                 .foregroundStyle(Theme.color.tone(complianceTone(repo.compliance)))
                 .frame(width: Col.policy, alignment: .leading)
+                // Hover = the top of the "why this grade" breakdown.
+                .help(repo.gradeFactors.isEmpty ? "no deductions"
+                      : repo.gradeFactors.sorted { $0.delta < $1.delta }.prefix(4)
+                          .map { "\($0.delta) \($0.label)" }.joined(separator: "\n"))
             HStack(spacing: 7) {
                 if repo.surprises.isEmpty { StatusBadge(text: "clean", tone: .ok, small: true) }
                 else { StatusBadge(text: "\(repo.surprises.count)", tone: repo.health.tone, small: true) }
@@ -151,8 +163,34 @@ private struct RepoTableRow: View {
     }
 }
 
+/// A plain grouping directory (`__APPS`, `macOS`) — structure, not a destination.
+/// Mirrors the sidebar's inert group rows: no hover, no navigation.
+private struct GroupTableRow: View {
+    let node: SidebarNode
+    var body: some View {
+        HStack(spacing: 8) {
+            VibeIcon("folder", size: 12, color: Theme.color.textFaint)
+            Text(node.name)
+                .font(VibeFont.mono(VibeFont.size.xs, .medium))
+                .foregroundStyle(Theme.color.textMuted)
+            Spacer()
+            Text("\(node.repoCount)")
+                .font(VibeFont.mono(VibeFont.size.xxs))
+                .foregroundStyle(Theme.color.textGhost)
+        }
+        .padding(.horizontal, Theme.space.x4)
+        .padding(.leading, CGFloat(node.depth) * 18)
+        .frame(height: 28)
+        .frame(maxWidth: .infinity)
+        .background(Theme.color.surfaceSunken.opacity(0.55))
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.color.borderSubtle).frame(height: 1) }
+        .help(node.absolutePath)
+    }
+}
+
 private struct WorkspaceTableRow: View {
     let ws: Repo
+    var depth: Int = 0
     var onTap: () -> Void
     @State private var hover = false
     var body: some View {
@@ -168,6 +206,7 @@ private struct WorkspaceTableRow: View {
             VibeIcon("chevron-right", size: 13, color: Theme.color.textGhost)
         }
         .padding(.horizontal, Theme.space.x4)
+        .padding(.leading, CGFloat(depth) * 18)
         .frame(height: 38)
         .frame(maxWidth: .infinity)
         .background(hover ? Theme.color.surfaceRaised : Theme.color.surface2)

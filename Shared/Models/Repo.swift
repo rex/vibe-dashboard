@@ -69,6 +69,7 @@ struct Repo: Identifiable, Sendable, Hashable {
     var docs = Docs()
     var serena: SerenaState? = nil
     var surprises: [Finding] = []
+    var gradeFactors: [GradeFactor] = []   // the "why this grade" breakdown (empty = clean bill)
 
     // local-only signals
     var build = RepoBuild()

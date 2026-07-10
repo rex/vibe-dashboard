@@ -88,6 +88,46 @@ struct OverviewAlerts: View {
     }
 }
 
+/// The "why this grade" breakdown: 100 − each listed deduction = the compliance
+/// score, criticals flagged. An empty list is an earned clean bill, stated plainly.
+struct GradeBreakdownView: View {
+    let factors: [GradeFactor]
+
+    var body: some View {
+        if factors.isEmpty {
+            HStack(spacing: Theme.space.x1_5) {
+                VibeIcon("check-circle", size: 12, color: Theme.color.ok)
+                Text("no deductions — 100 baseline, clean bill")
+                    .font(VibeFont.mono(VibeFont.size.xxs))
+                    .foregroundStyle(Theme.color.textMuted)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: Theme.space.x1) {
+                Text("100 baseline − deductions")
+                    .vibeMicroLabel(8, color: Theme.color.textGhost)
+                ForEach(factors.sorted { $0.delta < $1.delta }) { f in
+                    HStack(alignment: .firstTextBaseline, spacing: Theme.space.x2) {
+                        Text("\(f.delta)")
+                            .font(VibeFont.mono(VibeFont.size.xs, .bold))
+                            .foregroundStyle(Theme.color.tone(f.tone))
+                            .monospacedDigit()
+                            .frame(width: 30, alignment: .trailing)
+                        Text(f.label)
+                            .font(VibeFont.mono(VibeFont.size.xs))
+                            .foregroundStyle(Theme.color.textPrimary)
+                            .lineLimit(1)
+                        if f.critical {
+                            StatusBadge(text: "critical", tone: .danger, small: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .help(f.detail)
+                }
+            }
+        }
+    }
+}
+
 // MARK: - compact overview badges
 
 struct ManagedBadge: View {

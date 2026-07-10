@@ -33,7 +33,7 @@ struct RepoOverviewTab: View {
                         .frame(maxWidth: RepoTabLayout.metaColumns)
 
                     VStack(alignment: .leading, spacing: Theme.space.x4) {
-                        VibePanel(title: "COMPLIANCE", glow: repo.health == .ok) {
+                        VibePanel(title: "COMPLIANCE — WHY THIS GRADE", glow: repo.health == .ok) {
                             VStack(alignment: .leading, spacing: Theme.space.x3) {
                                 Meter(label: "IN POLICY",
                                       value: Double(repo.compliance),
@@ -41,6 +41,9 @@ struct RepoOverviewTab: View {
                                 StatusBadge(text: "\(repo.compliance)% compliant",
                                             tone: complianceTone(repo.compliance),
                                             solid: true)
+                                // The factor list IS the grade — every deduction
+                                // visible, so the number is never a mystery.
+                                GradeBreakdownView(factors: repo.gradeFactors)
                             }
                         }
                         VibePanel(title: "GATES", flushBody: true) { gateStrip }

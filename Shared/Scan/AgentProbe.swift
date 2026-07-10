@@ -34,6 +34,7 @@ enum AgentProbe {
         var kind: AgentSessionKind = .standard
         var transcriptPath: String? = nil
         var workflowId: String? = nil
+        var telemetry = SessionTelemetry()   // model / effort / context tokens (nil = not recorded)
     }
 
     /// Measured, uncommitted work for a live session — every field is real.

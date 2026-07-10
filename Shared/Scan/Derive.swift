@@ -39,68 +39,155 @@ enum Derive {
         return g
     }
 
-    static func compliance(_ r: Repo, signedRequired: Bool) -> Int {
-        var s = 100
-        s -= r.census.godFiles.count * 8
-        if !r.worktree.clean { s -= 12 }
-        if r.worktree.unpushed > 0 { s -= 8 }
-        if signedRequired && !r.worktree.signed { s -= 15 }
-        if r.drift.behind != nil { s -= 6 }
-        s -= hygienePenalty(r)
-        switch r.docs.changelog.status { case .fail: s -= 5; default: break }
-        switch r.docs.taskState.status { case .fail: s -= 6; default: break }
-        if let cov = r.coverage, let floor = r.coverageFloor, cov < floor { s -= (floor - cov) / 2 }
-        if r.agentActive && !r.hasActiveGuardrail() { s -= 10 }
-        if r.mcp.contains(where: { $0.status == .failed }) { s -= 3 }
-        return Swift.min(100, Swift.max(0, s))
-    }
+    // MARK: - Severity-weighted grading
+    //
+    // The old model was a flat OR: ANY one of a dozen conditions forced .danger, so
+    // a repo with a single dirty file rated as horribly as one with committed
+    // secrets — exactly the alert fatigue this app exists to avoid ("a red dot must
+    // mean something"). Now every problem is a FACTOR with a weight; the factor
+    // list is the visible "why this grade" breakdown, compliance is 100 + Σdelta,
+    // and health falls out of the score — except CRITICAL factors (governance
+    // fraud, conflicts, secrets, an unguarded live agent), which force danger
+    // regardless of how clean everything else is.
 
-    /// Compliance penalty for management level + hygiene shenanigans.
-    private static func hygienePenalty(_ r: Repo) -> Int {
-        var p = 0
+    static func factors(_ r: Repo, signedRequired: Bool) -> [GradeFactor] {
+        var f: [GradeFactor] = []
+        func add(_ label: String, _ delta: Int, _ tone: VibeTone,
+                 critical: Bool = false, _ detail: String) {
+            f.append(GradeFactor(label: label, delta: delta, tone: tone,
+                                 critical: critical, detail: detail))
+        }
+
+        // ---- critical: red no matter what else looks like ----
         switch r.management {
-        case .unmanaged: p += 40
-        case .partial: p += 12
+        case .unmanaged:
+            add("unmanaged — no VIBE.yaml", -30, .danger, critical: true,
+                "no policy governs this repo; agents have worked here with zero guardrails")
+        case .partial:
+            add("no Makefile — gates can't run", -12, .warn,
+                "policy is declared but nothing can execute it")
         case .skeleton: break
         }
-        if r.vibeMalformed { p += 20 }
-        if isPolicyStub(r) { p += 20 }   // parses as managed but declares nothing enforceable
-        if !r.hygiene.conflictFiles.isEmpty { p += 25 }
-        if !r.hygiene.secretFiles.isEmpty { p += 20 }
-        if !r.hygiene.trackedJunk.isEmpty { p += 8 }
-        if !r.hygiene.junkFiles.isEmpty { p += 3 }
-        if r.hygiene.stashCount > 0 { p += 3 }
-        return p
+        if r.vibeMalformed {
+            add("VIBE.yaml won't parse", -25, .danger, critical: true,
+                "a policy file exists but silently enforces nothing")
+        } else if isPolicyStub(r) {
+            add("VIBE.yaml declares no enforceable policy", -25, .danger, critical: true,
+                "parses as managed while governing nothing")
+        }
+        if !r.hygiene.conflictFiles.isEmpty {
+            add("merge markers in \(r.hygiene.conflictFiles.count) file\(plural(r.hygiene.conflictFiles.count))",
+                -30, .danger, critical: true, "live <<<<<<< markers — a green build is lying")
+        }
+        if !r.hygiene.secretFiles.isEmpty {
+            add("\(r.hygiene.secretFiles.count) secret\(plural(r.hygiene.secretFiles.count)) tracked in git",
+                -25, .danger, critical: true, ".env / keys committed — rotate and remove")
+        }
+        if r.agentActive && !r.hasActiveGuardrail() {
+            add("live agent with no guardrail", -15, .danger, critical: true,
+                "an agent is editing with no PreToolUse hook to intercept it")
+        }
+
+        // ---- proportional: scale with how bad it actually is ----
+        if !r.worktree.clean {
+            let n = max(r.worktree.unstaged, 1)
+            var delta = n <= 2 ? -8 : n <= 10 ? -14 : -20
+            var label = "\(n) uncommitted file\(plural(n))"
+            if r.agentActive {
+                delta /= 2   // a live session is dirty by definition — mid-work, not forgotten
+                label += " (agent mid-work)"
+            }
+            add(label, delta, .warn, "uncommitted work on disk — gone if the tree is lost")
+        }
+        if r.worktree.unpushed > 0 {
+            let n = r.worktree.unpushed
+            add("\(n) unpushed commit\(plural(n))", n <= 2 ? -6 : -12, .warn,
+                "committed but not on any remote — not really saved")
+        }
+        let gods = r.census.godFiles.count
+        if gods > 0 {
+            add("\(gods) god-file\(plural(gods))", -8 * min(gods, 3), gods >= 3 ? .danger : .warn,
+                "over the hard line limit and in scope")
+        }
+        if signedRequired && !r.worktree.signed {
+            add("unsigned commits (policy requires signing)", -15, .warn,
+                "workflow.signed_commits_required is true; HEAD isn't signed")
+        }
+        let missingHooks = r.hooks.filter { $0.status == .missing }.count
+        if missingHooks > 0 {
+            add("\(missingHooks) hook\(plural(missingHooks)) point at missing scripts", -10, .warn,
+                "wired in settings but not on disk — the gate runs nothing")
+        }
+        let stubHooks = r.hooks.filter { $0.status == .nothing }.count
+        if stubHooks > 0 {
+            add("\(stubHooks) stub hook\(plural(stubHooks))", -6, .warn,
+                "installed but enforces nothing")
+        }
+        if r.docs.taskState.status == .fail {
+            add("TASK_STATE.md over hard limit", -6, .warn,
+                "\(r.docs.taskState.lines) lines — a dumping ground, not a plan")
+        }
+        if r.docs.changelog.status == .fail {
+            add("CHANGELOG \(r.docs.changelog.behind) behind", -6, .warn,
+                "release notes are fiction right now")
+        }
+        if !r.hygiene.trackedJunk.isEmpty {
+            add("dependency dirs committed", -8, .warn,
+                r.hygiene.trackedJunk.joined(separator: ", "))
+        }
+        let abandoned = r.worktrees.filter { $0.state == .abandoned }.count
+        if abandoned > 0 {
+            add("\(abandoned) abandoned worktree\(plural(abandoned))", -4 * min(abandoned, 2), .warn,
+                "created and forgotten")
+        }
+        if let cov = r.coverage, let floor = r.coverageFloor, cov < floor {
+            add("coverage \(cov)% under floor \(floor)%", -min(10, (floor - cov) / 2), .warn,
+                "below the declared minimum")
+        }
+        if r.drift.behind != nil {
+            add("skeleton \(r.drift.behind ?? "behind")", -5, .warn,
+                "stamped \(r.drift.version ?? "—") vs fleet-latest \(r.drift.latest ?? "—")")
+        }
+        let failedMcp = r.mcp.filter { $0.status == .failed }.count
+        if failedMcp > 0 {
+            add("\(failedMcp) MCP server\(plural(failedMcp)) failing", -3, .warn, "recent calls failed")
+        }
+        if !r.hygiene.junkFiles.isEmpty {
+            add("\(r.hygiene.junkFiles.count) stray backup/dupe file\(plural(r.hygiene.junkFiles.count))",
+                -3, .neutral, "Finder/agent leftovers")
+        }
+        if r.hygiene.stashCount > 0 {
+            add("\(r.hygiene.stashCount) forgotten stash\(r.hygiene.stashCount == 1 ? "" : "es")",
+                -2, .neutral, "work parked in git stash")
+        }
+        return f
+    }
+
+    /// compliance = 100 + Σdelta, clamped. The factor list and the score can never
+    /// disagree because one is computed from the other.
+    static func score(_ factors: [GradeFactor]) -> Int {
+        Swift.min(100, Swift.max(0, 100 + factors.reduce(0) { $0 + $1.delta }))
+    }
+
+    /// Health bands: a critical factor is always danger; otherwise the score
+    /// decides — ≥95 ok, 60–94 warn, <60 danger. One dirty file (−8 → 92) reads
+    /// warn with a visible reason; danger means compounding real problems.
+    static func healthBand(_ factors: [GradeFactor]) -> Health {
+        if factors.contains(where: \.critical) { return .danger }
+        let s = score(factors)
+        if s < 60 { return .danger }
+        return s >= 95 ? .ok : .warn
+    }
+
+    static func compliance(_ r: Repo, signedRequired: Bool) -> Int {
+        score(factors(r, signedRequired: signedRequired))
     }
 
     static func health(_ r: Repo, signedRequired: Bool) -> Health {
-        // Dirty/unpushed trees and other "nasty surprises" are PROBLEMS, not warnings —
-        // forgotten uncommitted work is the single biggest thing this app hunts for.
-        let danger = !r.census.godFiles.isEmpty
-            || !r.worktree.clean                                   // uncommitted changes
-            || r.worktree.unpushed > 0                             // committed but never pushed
-            || r.management == .unmanaged                          // no policy governs it
-            || r.vibeMalformed                                     // VIBE.yaml on disk but won't parse
-            || !r.hygiene.conflictFiles.isEmpty                    // merge markers left in files
-            || !r.hygiene.secretFiles.isEmpty                      // secrets committed to git
-            || !r.hygiene.trackedJunk.isEmpty                      // node_modules/DerivedData committed
-            || (signedRequired && !r.worktree.signed)
-            || (r.agentActive && !r.hasActiveGuardrail())
-            || r.docs.changelog.status == .fail
-            || r.docs.taskState.status == .fail
-            || r.hooks.contains { $0.status == .missing }
-            || isPolicyStub(r)                                     // parses as managed, governs nothing
-        if danger { return .danger }
-        // Amber = real-but-not-urgent: skeleton drift, incomplete scaffold, coverage,
-        // flaky MCP, stray junk files, parked stashes. Soft-limit files are IN POLICY.
-        let warn = r.drift.behind != nil
-            || r.management == .partial
-            || !r.hygiene.junkFiles.isEmpty
-            || r.hygiene.stashCount > 0
-            || (r.coverage.map { c in (r.coverageFloor.map { c < $0 } ?? false) } ?? false)
-            || r.mcp.contains { $0.status == .failed || $0.broad }
-        return warn ? .warn : .ok
+        healthBand(factors(r, signedRequired: signedRequired))
     }
+
+    private static func plural(_ n: Int) -> String { n == 1 ? "" : "s" }
 
     static func surprises(_ r: Repo, signedRequired: Bool, hardLimit: Int) -> [Finding] {
         var f: [Finding] = []

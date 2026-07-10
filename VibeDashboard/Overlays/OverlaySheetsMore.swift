@@ -140,13 +140,16 @@ struct ExcludeSheet: View {
 
     private func perform() {
         app.closeSheet()
-        let target = vibePath, glob = path, name = repo.name
+        let target = vibePath, glob = path, name = repo.name, repoId = repo.id
         Task { @MainActor in
             let result = await Task.detached { VibeYamlEditor.addExcludeGlob(vibePath: target, glob: glob) }.value
             switch result {
             case .added(let g):
                 app.toast("excluded from scope", "\(name) · VIBE.yaml + \(g)", .ok)
-                await store.rescan()
+                // Targeted: the full per-repo probe re-runs the census with the new
+                // exclude_globs, so the finding clears everywhere in seconds — no
+                // fleet sweep for a one-line VIBE.yaml edit.
+                await store.rescan(repoId: repoId)
             case .alreadyExcluded:
                 app.toast("already excluded", "\(glob) is already in exclude_globs", .info)
             case .noVibe:

@@ -86,6 +86,9 @@ struct AgentInfo: Sendable, Hashable {
     var sessionKind: AgentSessionKind = .standard
     var transcriptPath: String? = nil
     var workflowId: String? = nil
+    var model: String? = nil         // recorded in the transcript; nil = not recorded (hide)
+    var effort: String? = nil        // Codex reasoning effort; Claude doesn't record one
+    var contextTokens: Int? = nil    // context-window tokens as of the last turn
     var filesTouched: Int = 0        // real: files changed vs HEAD (git diff --numstat)
     var linesAdded: Int? = nil       // real added lines; nil = not measurable (don't render)
     var linesRemoved: Int? = nil     // real removed lines; nil = not measurable (don't render)
@@ -105,6 +108,9 @@ extension AgentInfo {
             sessionKind: s.kind,
             transcriptPath: s.transcriptPath,
             workflowId: s.workflowId,
+            model: s.telemetry.model,
+            effort: s.telemetry.effort,
+            contextTokens: s.telemetry.contextTokens,
             filesTouched: work.filesTouched,
             linesAdded: work.measured ? work.linesAdded : nil,
             linesRemoved: work.measured ? work.linesRemoved : nil,
@@ -150,6 +156,19 @@ struct SerenaState: Sendable, Hashable {
     var project: String = ""
     var memories: Int = 0
     var lastSession: String = "—"
+}
+
+/// One deduction in a repo's grade — the "why this grade" building block. The
+/// factor list IS the grade: compliance = 100 + Σdelta (clamped), health from the
+/// score bands plus `critical` overrides. Every factor is visible in the repo's
+/// breakdown panel, so a rating is never a mystery.
+struct GradeFactor: Identifiable, Sendable, Hashable {
+    var label: String        // "2 uncommitted files"
+    var delta: Int           // negative points against the 100 baseline
+    var tone: VibeTone
+    var critical: Bool = false   // forces danger regardless of the score
+    var detail: String = ""      // one line of why it matters
+    var id: String { label }
 }
 
 struct Finding: Identifiable, Sendable, Hashable {

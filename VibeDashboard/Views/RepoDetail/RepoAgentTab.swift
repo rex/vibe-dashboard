@@ -197,7 +197,10 @@ private struct LiveSessionCard: View {
                             .font(VibeFont.mono(VibeFont.size.md, .bold))
                             .foregroundStyle(Theme.color.textBright)
                     }
-                    Text("\(agent.branch ?? "—") · \(agent.elapsed ?? "—")")
+                    Text("\(agent.branch ?? "—") · \(agent.elapsed ?? "—")"
+                         + (agent.model.map { " · \($0)" } ?? "")
+                         + (agent.effort.map { " · \($0)" } ?? "")
+                         + (agent.contextTokens.map { " · \(SessionTelemetry.kTokens($0)) ctx" } ?? ""))
                         .font(VibeFont.mono(VibeFont.size.xxs))
                         .foregroundStyle(Theme.color.textMuted)
                         .lineLimit(1)

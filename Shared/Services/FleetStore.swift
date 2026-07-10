@@ -56,42 +56,66 @@ final class FleetStore {
         isScanning = false
     }
 
-    /// Re-probe ONE repo's git-derived signals (worktree, worktrees, build, scm) — the
-    /// state a commit / push / prune actually changes — and re-grade it in place,
-    /// instead of sweeping the whole fleet. A full sweep re-probes every managed repo
-    /// and, as TASK_STATE warns, can lock the machine for one edit. Docs/census/hooks
-    /// are left as the last full scan measured them (a git write doesn't touch those),
-    /// so this refreshes exactly what changed and nothing it can't honestly claim.
-    /// Re-grading is essential: a resolved dirty/unpushed/unsigned state MUST clear its
-    /// findings, else the UI would keep showing a fixed problem as still-open.
+    /// Re-probe ONE repo through the SAME full per-repo pipeline the sweep uses —
+    /// policy, census (incl. exclude_globs), docs, hygiene, hooks, git — then
+    /// re-grade it and its workspace ancestors in place. A VIBE.yaml edit (e.g.
+    /// "exclude this god-file") therefore propagates to every view seconds later
+    /// without a fleet sweep; a full sweep re-probes every managed repo and can
+    /// lock the machine for one edit. Re-grading is essential: a resolved finding
+    /// MUST disappear, else the UI keeps showing a fixed problem as still-open.
     func rescan(repoId: String) async {
         guard !isScanning, let idx = rawFleet.repos.firstIndex(where: { $0.id == repoId }) else { return }
         isScanning = true
         let now = Date()
-        let abs = (rawFleet.repos[idx].absolutePath as NSString).expandingTildeInPath
-        let git = await GitProbe.probe(abs, now: now)
+        let old = rawFleet.repos[idx]
+        let abs = (old.absolutePath as NSString).expandingTildeInPath
+        var fresh = await scanner.probeRepo(abs, now: now)
+        // A single-repo probe can't know fleet topology or live sessions — carry them.
+        fresh.id = old.id
+        fresh.kind = old.kind
+        fresh.parentId = old.parentId
+        fresh.children = old.children
+        fresh.agents = old.agents
+        fresh.agent = old.agent
         var repos = rawFleet.repos
-        var r = repos[idx]
-        let signedReq = r.signedRequired
-        if git.isRepo {
-            r.worktree = git.worktree
-            r.worktrees = git.worktrees
-            r.build = DeriveIntegrations.build(abs, git: git)
-            r.scm = DeriveIntegrations.scm(branch: git.branch, remotes: git.remotes,
-                                           worktree: git.worktree, signedRequired: signedReq)
-        }
-        r.gates = Derive.gates(r)
-        r.compliance = Derive.compliance(r, signedRequired: signedReq)
-        r.health = Derive.health(r, signedRequired: signedReq)
-        r.surprises = Derive.surprises(r, signedRequired: signedReq, hardLimit: 400)
-        r.checkedAt = now
-        repos[idx] = r
+        repos[idx] = fresh
+        Self.regrade(&repos, at: idx, now: now)
         rawFleet = Fleet.assemble(scanner: rawFleet.scanner, appBuild: rawFleet.appBuild, repos: repos,
                                   activity: rawFleet.activity, autopilot: rawFleet.autopilot,
                                   catalog: rawFleet.skillCatalog)
         applyVisibility()
         lastScan = now
         isScanning = false
+    }
+
+    /// Re-grade one repo (drift vs fleet-latest, gates, factors, compliance, health,
+    /// surprises) and refresh its workspace ancestors' rollups. Pure CPU — shared by
+    /// the targeted rescan and the agent monitor (a session appearing/vanishing
+    /// changes guardrail/dirty grading, so agent changes must re-grade too).
+    static func regrade(_ repos: inout [Repo], at idx: Int, now: Date) {
+        let latest = SkeletonProbe.latest(repos.compactMap { $0.drift.version })
+        let signedReq = repos[idx].signedRequired
+        repos[idx].drift = SkeletonProbe.drift(version: repos[idx].drift.version, latest: latest)
+        repos[idx].gates = Derive.gates(repos[idx])
+        let factors = Derive.factors(repos[idx], signedRequired: signedReq)
+        repos[idx].gradeFactors = factors
+        repos[idx].compliance = Derive.score(factors)
+        repos[idx].health = Derive.healthBand(factors)
+        repos[idx].surprises = Derive.surprises(repos[idx], signedRequired: signedReq, hardLimit: 400)
+        repos[idx].checkedAt = now
+
+        var idxById: [String: Int] = [:]
+        for i in repos.indices { idxById[repos[i].id] = i }
+        var cur = repos[idx].parentId
+        var hops = 0
+        while let pid = cur, let pi = idxById[pid], hops < 64 {
+            let kids = repos[pi].children.compactMap { idxById[$0] }
+            repos[pi].health = kids.map { repos[$0].health }.max() ?? .ok
+            repos[pi].compliance = kids.isEmpty ? 100
+                : kids.reduce(0) { $0 + repos[$1].compliance } / kids.count
+            cur = repos[pi].parentId
+            hops += 1
+        }
     }
 
     // ---- background agent monitor (lightweight — no full rescan) ----
@@ -228,9 +252,16 @@ final class FleetStore {
                 ($0.lastActivityAt ?? .distantPast) > ($1.lastActivityAt ?? .distantPast)
             }
             if repos[i].agents != agents || repos[i].agent != agents.first {
+                let hadAgents = repos[i].agentActive
                 repos[i].agents = agents
                 repos[i].agent = agents.first
                 changed = true
+                // A session appearing/vanishing changes grading (guardrail-less
+                // live agent is a critical factor; dirty is softened mid-work) —
+                // re-grade in place so health tracks reality between sweeps.
+                if hadAgents != repos[i].agentActive {
+                    Self.regrade(&repos, at: i, now: now)
+                }
             }
         }
         guard changed else { return }   // no agent state moved — skip the re-assemble (idle = zero work)

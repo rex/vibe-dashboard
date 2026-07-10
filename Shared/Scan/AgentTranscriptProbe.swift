@@ -132,7 +132,8 @@ enum AgentTranscriptProbe {
             state: state,
             kind: shape.kind,
             transcriptPath: path,
-            workflowId: shape.workflowId
+            workflowId: shape.workflowId,
+            telemetry: SessionTelemetry.read(tail: tail, tool: tool)
         )
     }
 

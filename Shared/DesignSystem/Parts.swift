@@ -43,24 +43,43 @@ struct HealthDot: View {
     }
 }
 
-/// Live-agent equalizer — 3 bars. Static heights (a per-row repeatForever
-/// animation across every active repo pegs the main thread); the color + the
-/// frozen-equalizer shape carry the "agent working" signal.
+/// Live-agent equalizer — 3 bars. ACTIVE instances animate on a slow periodic
+/// timeline (~2 Hz height steps, eased) — cheap because only the handful of
+/// truly-live pulses tick, and a periodic timeline re-evaluates just this tiny
+/// subtree. This is NOT the banned pattern: no repeatForever, no
+/// TimelineView(.animation) 120fps re-render across every row (that pegged the
+/// main thread at 45% idle and is why the pulse froze). Inactive = static + dim.
 struct AgentPulse: View {
     var active: Bool = true
     var color: Color = Theme.color.warn
     var size: CGFloat = 13
-    private let heights: [CGFloat] = [0.5, 1.0, 0.68]
+
+    private static let step: TimeInterval = 0.45
+    private static let patterns: [[CGFloat]] = [
+        [0.50, 1.00, 0.68], [0.85, 0.55, 0.95], [0.60, 0.90, 0.45], [1.00, 0.65, 0.80],
+    ]
+
     var body: some View {
-        HStack(alignment: .center, spacing: 2) {
+        if active {
+            TimelineView(.periodic(from: .now, by: Self.step)) { ctx in
+                bars(tick: Int(ctx.date.timeIntervalSinceReferenceDate / Self.step))
+            }
+        } else {
+            bars(tick: 0).opacity(0.4)
+        }
+    }
+
+    private func bars(tick: Int) -> some View {
+        let pattern = Self.patterns[((tick % Self.patterns.count) + Self.patterns.count) % Self.patterns.count]
+        return HStack(alignment: .center, spacing: 2) {
             ForEach(0..<3, id: \.self) { i in
                 RoundedRectangle(cornerRadius: 1)
                     .fill(color)
-                    .frame(width: 2.5, height: size * heights[i])
+                    .frame(width: 2.5, height: size * pattern[i])
             }
         }
         .frame(height: size)
-        .opacity(active ? 1 : 0.4)
+        .animation(Theme.motion.easeOutBase, value: tick)
     }
 }
 
@@ -100,15 +119,17 @@ struct StatTile: View {
     let label: String
     var tone: VibeTone = .neutral
     var icon: String? = nil
-    var numberSize: CGFloat = 38
+    // 26pt + tight padding: nine tiles fit one row at normal window widths — the
+    // old 38pt/18pt tiles forced the window comically wide for the same numbers.
+    var numberSize: CGFloat = 26
     var action: (() -> Void)? = nil
     @State private var hover = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.space.x2) {
-            HStack(spacing: 7) {
-                if let icon { VibeIcon(icon, size: 12, color: Theme.color.textMuted) }
-                Text(label).vibeMicroLabel(VibeFont.size.xxs)
+        VStack(alignment: .leading, spacing: Theme.space.x1_5) {
+            HStack(spacing: 6) {
+                if let icon { VibeIcon(icon, size: 11, color: Theme.color.textMuted) }
+                Text(label).vibeMicroLabel(9)
             }
             HStack(alignment: .lastTextBaseline, spacing: 2) {
                 Text(value)
@@ -122,8 +143,8 @@ struct StatTile: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
-        .padding(.vertical, Theme.space.x4)
+        .padding(.horizontal, Theme.space.x3)
+        .padding(.vertical, Theme.space.x2_5)
         .background(hover && action != nil ? Theme.color.surfaceRaised : Theme.color.surface1)
         .contentShape(Rectangle())
         .onHover { hover = $0 }

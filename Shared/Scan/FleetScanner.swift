@@ -144,13 +144,17 @@ struct FleetScanner: Sendable {
     private static func grade(_ repos: inout [Repo]) {
         let latestSkeleton = SkeletonProbe.latest(repos.compactMap { $0.drift.version })
 
-        // PASS 1 — grade every leaf repo.
+        // PASS 1 — grade every leaf repo. Factors are computed ONCE and stored —
+        // they ARE the grade (score + health derive from them) and the UI's
+        // "why this grade" breakdown reads the same list, so they can't disagree.
         for i in repos.indices where repos[i].kind != .workspace {
             let signedReq = repos[i].signedRequired
             repos[i].drift = SkeletonProbe.drift(version: repos[i].drift.version, latest: latestSkeleton)
             repos[i].gates = Derive.gates(repos[i])
-            repos[i].compliance = Derive.compliance(repos[i], signedRequired: signedReq)
-            repos[i].health = Derive.health(repos[i], signedRequired: signedReq)
+            let factors = Derive.factors(repos[i], signedRequired: signedReq)
+            repos[i].gradeFactors = factors
+            repos[i].compliance = Derive.score(factors)
+            repos[i].health = Derive.healthBand(factors)
             repos[i].surprises = Derive.surprises(repos[i], signedRequired: signedReq, hardLimit: 400)
             repos[i].checked = "just now"
         }
@@ -227,7 +231,10 @@ struct FleetScanner: Sendable {
     }
 
     // ---- per-repo probe ----
-    private func probeRepo(_ abs: String, now: Date) async -> Repo {
+    // Internal (not private): FleetStore.rescan(repoId:) runs this SAME full pipeline
+    // for one repo, so a targeted refresh sees everything a sweep sees (census,
+    // policy, docs, hygiene — not just git) without re-probing the fleet.
+    func probeRepo(_ abs: String, now: Date) async -> Repo {
         let vibe = PolicyProbe.load(abs)
         let idn = FileProbes.identity(abs, vibe: vibe)
         let git = await GitProbe.probe(abs, now: now)

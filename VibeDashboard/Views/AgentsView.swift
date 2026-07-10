@@ -109,7 +109,8 @@ private struct WorkingNowSection: View {
                     EmptyState(icon: "moon", tone: .ok, text: "no agents working. the fleet is quiet.")
                 }
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 330), spacing: AgentsLayout.gap14)],
+                // 400pt floor: the 330 cards clipped branch/elapsed and the kind pill.
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 400), spacing: AgentsLayout.gap14)],
                           spacing: AgentsLayout.gap14) {
                     ForEach(sessions) { SessionCard(session: $0) }
                 }
@@ -190,18 +191,37 @@ private struct SessionCard: View {
     }
 
     private var sessionMeta: some View {
-        HStack(spacing: Theme.space.x1_5) {
-            VibeIcon(tool.icon, size: 10, color: Theme.color.textMuted)
-            Text(tool.label)
-            Text("· \(agent.branch ?? "—") · \(agent.elapsed ?? "—")")
-            Pill(text: kind.text, tone: kind.tone, icon: kind.icon)
-            if let workflowId = agent.workflowId {
-                Text("· \(workflowId)").foregroundStyle(Theme.color.textFaint)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: Theme.space.x1_5) {
+                VibeIcon(tool.icon, size: 10, color: Theme.color.textMuted)
+                Text(tool.label)
+                Text("· \(agent.branch ?? "—") · \(agent.elapsed ?? "—")")
+                Pill(text: kind.text, tone: kind.tone, icon: kind.icon)
+            }
+            .lineLimit(1)
+            // Real transcript telemetry — each field renders only when recorded.
+            if agent.model != nil || agent.contextTokens != nil || agent.workflowId != nil {
+                HStack(spacing: Theme.space.x1_5) {
+                    if let model = agent.model {
+                        Text(model).foregroundStyle(Theme.color.textSecondary)
+                    }
+                    if let effort = agent.effort {
+                        Text("· \(effort)").foregroundStyle(Theme.color.textFaint)
+                    }
+                    if let ctx = agent.contextTokens {
+                        Text("· \(SessionTelemetry.kTokens(ctx)) ctx")
+                            .foregroundStyle(Theme.color.textFaint)
+                            .monospacedDigit()
+                    }
+                    if let workflowId = agent.workflowId {
+                        Text("· \(workflowId)").foregroundStyle(Theme.color.textGhost)
+                    }
+                }
+                .lineLimit(1)
             }
         }
         .font(VibeFont.mono(VibeFont.size.xxs))
         .foregroundStyle(Theme.color.textMuted)
-        .lineLimit(1)
     }
 
     private var diffMeta: some View {
