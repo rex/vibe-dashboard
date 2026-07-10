@@ -74,6 +74,12 @@ targets:
       testTargets:
         - VibeDashboardTests
       gatherCoverageData: true
+      environmentVariables:
+        # Silence macOS unified-logging chatter in Xcode's console (linkd/
+        # autoShortcut XPC denials from unsigned dev builds, CA fence timeouts,
+        # ViewBridge noise). App-side stdout (print) is unaffected; proper
+        # signing in the release pipeline removes the linkd denials for real.
+        OS_ACTIVITY_MODE: disable
 
   # ============================================================
   # Unit tests (Swift Testing).

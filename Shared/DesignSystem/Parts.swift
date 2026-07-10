@@ -75,7 +75,12 @@ struct AgentPulse: View {
             ForEach(0..<3, id: \.self) { i in
                 RoundedRectangle(cornerRadius: 1)
                     .fill(color)
-                    .frame(width: 2.5, height: size * pattern[i])
+                    // FIXED frame + scaleEffect: the bar's visual height animates as a
+                    // pure render-layer transform. Animating `height:` instead re-runs
+                    // MAIN-THREAD LAYOUT every frame of every ease (~120fps × instances
+                    // — sampled at 22k layout frames/5s). Never animate layout here.
+                    .frame(width: 2.5, height: size)
+                    .scaleEffect(x: 1, y: pattern[i], anchor: .center)
             }
         }
         .frame(height: size)
