@@ -3,6 +3,25 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.66.0] — 2026-07-10
+
+### Fixed
+- **Watch panes no longer "reset" mid-watch — lane identity is now sacred.**
+  Standard-session lanes (a session fanning out Agent-tool subagents, no
+  workflow journal) were numbered by position in a name-sorted, recency-filtered
+  file listing; agent ids are random hex, so each new wave's files interleaved
+  alphabetically and shifted almost every lane — a completed pane suddenly
+  streamed a *different* agent's transcript from the top (hit live on a
+  19-subagent, 3-wave session). Lanes now stick to their FILE for the life of
+  the window: new agents append after the highest existing id, and a file that
+  ages past the recency filter stays put once shown (the filter only gates new
+  admissions on a fresh watch).
+- Workflow lanes hardened against the same class: replay-slot ids survive a
+  slot whose agent file hasn't landed yet (no more compress-and-renumber), and
+  on-disk-but-unjournaled files are admitted only on their second consecutive
+  sighting — in their own high id space — instead of flashing into a lane and
+  immediately migrating into their replay slot.
+
 ## [0.64.0] — 2026-07-10
 
 ### Fixed

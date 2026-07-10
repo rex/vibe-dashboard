@@ -178,6 +178,12 @@ final class AgentWatchModel {
         var meta: WatchWorkflowMeta
         var returned = 0
         var total = 0
+        /// Workflow agent files seen on disk but not (yet) in the journal. A file
+        /// is admitted as an "extra" lane only on its SECOND consecutive sighting —
+        /// freshly spawned agents beat their own journal line to disk by well under
+        /// a discovery cycle, and admitting them instantly made a lane flash into
+        /// existence and immediately migrate into its replay slot.
+        var pendingExtras: Set<String> = []
     }
 
     /// Cheap change detector — avoids replacing (and re-diffing) hundreds of event
@@ -196,7 +202,7 @@ final class AgentWatchModel {
                                     discover: Bool, now: Date) -> Snapshot {
         var next = prior
         if discover || prior.lanes.isEmpty {
-            next = discoverLanes(target: target, prior: prior)
+            next = discoverLanes(target: target, prior: prior, now: now)
         }
         for l in next.lanes.indices {
             for s in next.lanes[l].segments.indices {
@@ -206,138 +212,5 @@ final class AgentWatchModel {
             }
         }
         return next
-    }
-
-    /// Enumerate transcripts + journal + plan sidecars and shape them into lanes.
-    /// Existing segments keep their tail state; agents that appear mid-watch join
-    /// a freed lane (the hop) or open a new one (a wider fan-out).
-    nonisolated static func discoverLanes(target: AgentWatchTarget, prior: Snapshot) -> Snapshot {
-        var byPath: [String: WatchPane] = [:]
-        for lane in prior.lanes {
-            for seg in lane.segments { byPath[seg.path] = seg }
-        }
-        // Title/badge are computed ONCE per pane (title derivation may read the
-        // transcript head — no reason to redo it every discovery tick); lifecycle
-        // fields refresh every time.
-        func pane(path: String, title: @autoclosure () -> String, badge: String?, isMain: Bool,
-                  order: Int, done: Bool, outcome: String?) -> WatchPane {
-            var p = byPath[path] ?? WatchPane(path: path, title: title(), badge: badge)
-            p.isMain = isMain
-            p.order = order; p.done = done; p.outcome = outcome
-            return p
-        }
-
-        switch target.kind {
-        case .workflow:
-            let dir = (target.transcriptPath as NSString).deletingLastPathComponent
-            let journal = WatchJournal.read(dir: dir)
-            let meta = WatchWorkflowMeta.load(workflowDir: dir)
-            var byAgentId: [String: WatchPane] = [:]
-            var extras: [WatchPane] = []   // on disk but not (yet) in the journal
-            for path in agentFiles(in: dir) {
-                let agentId = agentId(of: path)
-                let m = WatchAgentMeta.read(transcriptPath: path)
-                let p = pane(path: path,
-                             title: m.description
-                                 ?? WatchAgentMeta.promptTitle(transcriptPath: path)
-                                 ?? "agent \(agentId.prefix(7))",
-                             badge: m.agentType,
-                             isMain: false,
-                             order: journal.startOrder.firstIndex(of: agentId) ?? .max,
-                             done: journal.results[agentId] != nil,
-                             outcome: journal.results[agentId])
-                if journal.startOrder.contains(agentId) { byAgentId[agentId] = p }
-                else { extras.append(p) }
-            }
-            var laneAgents = assignLanes(events: journal.events)
-                .map { $0.compactMap { byAgentId[$0] } }
-                .filter { !$0.isEmpty }
-            laneAgents += extras.sorted { $0.path < $1.path }.map { [$0] }
-            let lanes = laneAgents.enumerated().map { WatchLane(id: $0.offset, segments: $0.element) }
-            return Snapshot(lanes: lanes, meta: meta,
-                            returned: journal.results.count,
-                            total: max(journal.startOrder.count, byAgentId.count + extras.count))
-
-        case .standard where target.tool == "claude-code":
-            var lanes = [WatchLane(id: 0, segments: [
-                pane(path: target.transcriptPath, title: target.repoName, badge: target.tool,
-                     isMain: true, order: -1, done: false, outcome: nil),
-            ])]
-            for (i, path) in recentSubagentFiles(mainTranscript: target.transcriptPath).enumerated() {
-                let m = WatchAgentMeta.read(transcriptPath: path)
-                lanes.append(WatchLane(id: i + 1, segments: [
-                    pane(path: path,
-                         title: m.description
-                             ?? WatchAgentMeta.promptTitle(transcriptPath: path)
-                             ?? "subagent \(agentId(of: path).prefix(7))",
-                         badge: m.agentType ?? "subagent",
-                         isMain: false, order: .max, done: false, outcome: nil),
-                ]))
-            }
-            return Snapshot(lanes: lanes, meta: WatchWorkflowMeta(),
-                            returned: 0, total: lanes.count)
-
-        default:
-            let lane = WatchLane(id: 0, segments: [
-                pane(path: target.transcriptPath, title: target.repoName, badge: target.tool,
-                     isMain: true, order: -1, done: false, outcome: nil),
-            ])
-            return Snapshot(lanes: [lane], meta: WatchWorkflowMeta(), returned: 0, total: 1)
-        }
-    }
-
-    /// Replay the journal into lanes. `started` takes the lowest freed lane (that
-    /// is the handoff — the previous occupant just returned) or opens a new one;
-    /// `result` frees the agent's lane. The journal carries no explicit parent
-    /// links, so temporal handoff IS the lineage signal — matching how pipelined
-    /// stages actually spawn (stage N+1 starts the moment stage N returns).
-    nonisolated static func assignLanes(events: [WatchJournal.Event]) -> [[String]] {
-        var lanes: [[String]] = []
-        var laneOf: [String: Int] = [:]
-        var free: [Int] = []
-        for event in events {
-            switch event.kind {
-            case .started:
-                guard laneOf[event.agentId] == nil else { continue }
-                let lane: Int
-                if free.isEmpty {
-                    lanes.append([])
-                    lane = lanes.count - 1
-                } else {
-                    free.sort()
-                    lane = free.removeFirst()
-                }
-                lanes[lane].append(event.agentId)
-                laneOf[event.agentId] = lane
-            case .result:
-                if let lane = laneOf[event.agentId], !free.contains(lane) { free.append(lane) }
-            }
-        }
-        return lanes
-    }
-
-    nonisolated static func agentFiles(in dir: String) -> [String] {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
-        return names.filter { $0.hasPrefix("agent-") && $0.hasSuffix(".jsonl") }
-            .sorted().map { (dir as NSString).appendingPathComponent($0) }
-    }
-
-    nonisolated static func agentId(of path: String) -> String {
-        let base = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
-        return base.hasPrefix("agent-") ? String(base.dropFirst("agent-".count)) : base
-    }
-
-    /// A live session's own Agent-tool subagents: `<sessionDir>/subagents/agent-*.jsonl`
-    /// with recent activity. Workflow transcripts live deeper (`subagents/workflows/…`)
-    /// and are watched via their own workflow card — not duplicated here.
-    nonisolated static func recentSubagentFiles(mainTranscript: String,
-                                                now: Date = Date()) -> [String] {
-        let sessionDir = (mainTranscript as NSString).deletingPathExtension
-        let dir = (sessionDir as NSString).appendingPathComponent("subagents")
-        return agentFiles(in: dir).filter { path in
-            guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-                  let m = attrs[.modificationDate] as? Date else { return false }
-            return now.timeIntervalSince(m) < AgentProbe.retentionWindow
-        }
     }
 }
