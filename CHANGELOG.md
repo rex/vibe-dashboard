@@ -3,6 +3,30 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.64.0] — 2026-07-10
+
+### Fixed
+- **The CPU saga, closed: ~125% → 12.5% (Debug, Xcode-attached)** — five
+  sampled culprits, five fixes: (1) fleet reassembly on every transcript
+  append → meaningful-change gating; (2) per-append watch-window ticks +
+  whole-array lane publishing → per-lane observable boxes (a content tick
+  re-renders one lane, not eight); (3) the pulse animating layout — first as
+  height, then as an animated scaleEffect — → Canvas drawing in a fixed
+  frame (sampled layout frames: 9,676 → 1), same for the scan bar and rescan
+  spinner (zero repeatForever remains); (4) session detection re-parsing
+  ~1.25 MB per recent transcript every ~5s → facts cached on (mtime, size);
+  (5) six pulse instances each committing display updates on their own phase
+  → one shared epoch, one commit per beat.
+- FSEvents refresh debounce livelock (continuous events cancelled the pending
+  refresh forever); targeted rescans no longer light the global "scanning"
+  indicator; agent-busy repos re-probe at 30s.
+- Phantom repos: a VIBE'd directory without its own .git (e.g. skeleton
+  templates) no longer inherits the enclosing repo's git state; conflict
+  markers are line-anchored (the scanner had flagged its own tests and its
+  own implementation); the conflict finding lists every file.
+- Hooks are read from project, local, AND user scope; this repo's bash-guard
+  is wired (PreToolUse) so the guardrail critical clears honestly.
+
 ## [0.55.0] — 2026-07-09
 
 ### Fixed
