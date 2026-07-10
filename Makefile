@@ -56,6 +56,7 @@ help:
 	  "  make dmg-local          build an UNSIGNED app + DMG into dist/ (testing only)" \
 	  "  make notary-setup       store notary credentials once (ARGS=\"--apple-id … --team-id …\")" \
 	  "  make release            archive → sign → notarize → stapled DMG (the shippable)" \
+	  "  make publish            publish the DMG + Sparkle appcast as a GitHub Release" \
 	  "  make clean              clean derived data + regenerated project" \
 	  ""
 
@@ -177,6 +178,10 @@ notary-setup:
 .PHONY: release
 release:
 	@./Scripts/release.sh full
+
+.PHONY: publish
+publish:
+	@./Scripts/release.sh publish
 
 .PHONY: clean
 clean:

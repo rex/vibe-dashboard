@@ -3,6 +3,14 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.81.0] — 2026-07-10
+
+### Added
+- **`make publish`** — the final leg of the release pipeline: generates an
+  EdDSA-signed Sparkle `appcast.xml` (key read from the login Keychain),
+  publishes the notarized DMG + appcast as a GitHub Release, and verifies the
+  live feed + enclosure URLs end to end. First public release ships with this.
+
 ## [0.80.0] — 2026-07-10
 
 ### Added

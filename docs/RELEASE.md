@@ -141,12 +141,19 @@ so the assets are publicly downloadable). `SUFeedURL` points at
 
 ### Per release
 
-After `make release` produces the notarized DMG, the feed is published:
-`generate_appcast` signs each archive with the Keychain EdDSA key and writes
-`appcast.xml`, then the DMG + `appcast.xml` upload as assets on a GitHub Release
-of this repo. This becomes a `make publish` step once the Sparkle keys exist
-(deferred until then so it's built and tested against real values, not
-placeholders).
+```bash
+make release    # notarized, stapled DMG into dist/
+make publish    # EdDSA-sign → appcast.xml → GitHub Release → verify the live feed
+```
+
+Run both **on the same commit** so the DMG's stamped version matches the tag
+(`publish` refuses a missing/version-mismatched DMG). `publish` finds
+`generate_appcast` inside the SPM artifact under `build/spm`, signs with the
+EdDSA private key from your **login Keychain** (first use may pop a Keychain
+prompt — Always Allow), creates release `v<version>` with the DMG +
+`appcast.xml` as assets, then verifies that
+`releases/latest/download/appcast.xml` and the enclosure URL actually resolve.
+Release notes are pulled from the version's `CHANGELOG.md` section.
 
 ## Notes
 

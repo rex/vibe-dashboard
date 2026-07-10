@@ -15,6 +15,10 @@
 #                        hardened runtime) → notarize + staple the app → build,
 #                        sign, notarize + staple the DMG. Requires a Developer ID
 #                        Application certificate AND a stored notary profile.
+#   release.sh publish   Publish the DMG built by `full` as a GitHub Release with a
+#                        Sparkle appcast: EdDSA-sign via the Keychain key, generate
+#                        appcast.xml, `gh release create` with both assets, verify
+#                        the SUFeedURL resolves. Run `full` first, SAME commit.
 #
 # Config (env overrides):
 #   NOTARY_PROFILE   keychain profile for notarytool   (default: vibe-notary)
@@ -171,7 +175,56 @@ case "${1:-full}" in
     ok "$dmg"
     ;;
 
+  publish)
+    # ---- preconditions -----------------------------------------------------
+    command -v gh >/dev/null 2>&1 || die "gh CLI required for publish"
+    dmg="$DIST/$DMG_NAME"
+    [ -f "$dmg" ] || die "no $dmg — run 'make release' first (on THIS commit, so versions match)"
+    xcrun stapler validate "$dmg" >/dev/null 2>&1 || die "DMG is not notarized+stapled — run 'make release'"
+    repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)"
+    [ -n "$repo" ] || die "cannot determine GitHub repo (gh auth?)"
+    tag="v${MARKETING}"
+    gh release view "$tag" -R "$repo" >/dev/null 2>&1 && die "release $tag already exists"
+
+    # ---- appcast: EdDSA-sign the DMG + write the feed ----------------------
+    # generate_appcast ships inside the SPM binary artifact that make resolves
+    # into build/spm; it reads the private EdDSA key from the login Keychain
+    # (first use may pop a Keychain permission prompt — click Always Allow).
+    gen="$(find build/spm/artifacts -type f -name generate_appcast -path '*Sparkle/bin/*' 2>/dev/null | head -1)"
+    [ -n "$gen" ] && [ -x "$gen" ] || die "generate_appcast not found — run 'make build-mac' once to resolve SPM into build/spm"
+    feed="$DIST/feed"; rm -rf "$feed"; mkdir -p "$feed"
+    cp "$dmg" "$feed/"
+    say "generating EdDSA-signed appcast (Keychain may prompt for the Sparkle key)…"
+    "$gen" --download-url-prefix "https://github.com/${repo}/releases/download/${tag}/" \
+           -o "$feed/appcast.xml" "$feed"
+    grep -q 'sparkle:edSignature' "$feed/appcast.xml" \
+      || die "appcast has no EdDSA signature — is the Sparkle private key in the login Keychain?"
+    ok "appcast.xml written + signed"
+
+    # ---- GitHub release: DMG + appcast as assets ---------------------------
+    # SUFeedURL points at releases/latest/download/appcast.xml, so the appcast
+    # must be an asset of (at least) the latest release; enclosure URLs inside
+    # it are per-tag and permanent.
+    notes="$(awk -v v="$MARKETING" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md)"
+    [ -n "$notes" ] || notes="Vibe Dashboard ${MARKETING}"
+    say "creating GitHub release ${tag} on ${repo}…"
+    gh release create "$tag" "$dmg" "$feed/appcast.xml" \
+      -R "$repo" --title "Vibe Dashboard ${MARKETING}" --notes "$notes" --latest
+    git fetch --tags --quiet 2>/dev/null || true
+
+    # ---- verify what Sparkle will actually see -----------------------------
+    say "verifying the live feed…"
+    feed_url="https://github.com/${repo}/releases/latest/download/appcast.xml"
+    curl -fsSL "$feed_url" -o "$DIST/feed-live.xml" || die "feed URL does not resolve: $feed_url"
+    grep -q "sparkle:edSignature" "$DIST/feed-live.xml" || die "live feed missing EdDSA signature"
+    encl="$(sed -n 's/.*url="\([^"]*\.dmg\)".*/\1/p' "$DIST/feed-live.xml" | head -1)"
+    curl -fsIL "$encl" >/dev/null || die "enclosure URL does not resolve: $encl"
+    ok "feed live: $feed_url"
+    ok "enclosure: $encl"
+    ok "PUBLISH COMPLETE — ${tag}. Installed apps will now see this update."
+    ;;
+
   *)
-    die "unknown mode '$1' — use: check | local | full"
+    die "unknown mode '$1' — use: check | local | full | publish"
     ;;
 esac
