@@ -205,7 +205,10 @@ case "${1:-full}" in
     # SUFeedURL points at releases/latest/download/appcast.xml, so the appcast
     # must be an asset of (at least) the latest release; enclosure URLs inside
     # it are per-tag and permanent.
+    # CHANGELOG headings use the full triplet (0.81.0) while the marketing
+    # string is MAJOR.MINOR (0.81) — try both.
     notes="$(awk -v v="$MARKETING" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md)"
+    [ -n "$notes" ] || notes="$(awk -v v="${MARKETING}.0" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md)"
     [ -n "$notes" ] || notes="Vibe Dashboard ${MARKETING}"
     say "creating GitHub release ${tag} on ${repo}…"
     gh release create "$tag" "$dmg" "$feed/appcast.xml" \

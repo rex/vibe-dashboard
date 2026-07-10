@@ -3,6 +3,13 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.82.0] — 2026-07-10
+
+### Fixed
+- `make publish` release-notes extraction handles the MAJOR.MINOR marketing
+  string vs. the CHANGELOG's full-triplet headings (found publishing v0.81 —
+  the first release shipped with a fallback title instead of its notes).
+
 ## [0.81.0] — 2026-07-10
 
 ### Added
