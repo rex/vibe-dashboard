@@ -183,17 +183,20 @@ final class FleetStore {
 
     private var lastAgentRefresh = Date.distantPast
 
-    /// Trailing debounce with a 5s floor between refreshes. A busy session appends
-    /// to its transcript every few seconds; refreshing on each write re-enumerated
-    /// ~/.claude/projects and spawned git diff/status per session ~once a second —
-    /// a large slice of the measured CPU burn. 5s keeps cards feeling live.
+    /// LEADING-EDGE schedule with a 5s floor — never cancel-and-reschedule. The
+    /// cancel-based debounce LIVELOCKED under continuous transcript churn: each
+    /// new event cancelled the pending refresh before its sleep elapsed, so the
+    /// FSEvents path never fired at all while agents streamed (a brand-new session
+    /// then waited on the 30s poll — on a starved main thread). One pending task
+    /// fires ~1.2–5s after the first event of a burst; later events ride along.
     private func debouncedAgentRefresh() {
-        agentFsDebounce?.cancel()
+        guard agentFsDebounce == nil else { return }
         let sinceLast = Date().timeIntervalSince(lastAgentRefresh)
         let delay = max(1.2, 5.0 - sinceLast)
         agentFsDebounce = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled, let self else { return }
+            guard let self else { return }
+            self.agentFsDebounce = nil
             self.lastAgentRefresh = Date()
             await self.refreshAgents()
         }

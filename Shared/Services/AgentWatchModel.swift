@@ -80,8 +80,18 @@ final class AgentWatchModel {
         fsWatcher?.stop(); fsWatcher = nil
     }
 
-    /// Run one tick immediately (an FSEvents nudge) without waiting for the loop.
-    func pokeNow() { Task { await tick() } }
+    /// FSEvents nudge — coalesced to one in-flight tick + a short settle so a burst
+    /// of transcript appends becomes one refresh, not a refresh per append.
+    func pokeNow() {
+        guard !pokePending else { return }
+        pokePending = true
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard let self else { return }
+            self.pokePending = false
+            await self.tick()
+        }
+    }
 
     /// The directory trees whose writes mean "this window has new content".
     private var watchDirs: [String] {
@@ -97,6 +107,11 @@ final class AgentWatchModel {
         }
     }
 
+    /// Run one tick immediately (an FSEvents nudge) — COALESCED: streaming agents
+    /// emit events several times a second, and ticking per event re-entered the
+    /// observable graph continuously. One pending poke at a time.
+    private var pokePending = false
+
     private func tick() async {
         let target = self.target
         let snapshot = Snapshot(lanes: lanes, meta: workflowMeta)
@@ -105,14 +120,22 @@ final class AgentWatchModel {
         let updated = await Task.detached(priority: .utility) {
             Self.compute(target: target, prior: snapshot, discover: discover, now: Date())
         }.value
-        now = Date()
         let fp = Self.fingerprint(updated.lanes)
+        // Touch observable state ONLY when content actually changed. `now` was
+        // being written unconditionally per tick — every write invalidates every
+        // lane view, and with FSEvents poking per transcript append that meant
+        // continuous full-window layout (~120fps; sampled at 18k layout frames/5s,
+        // 82% CPU) that starved the rest of the app. Status staleness ≤5s is fine:
+        // the streaming badge has a 20s tolerance window.
         if fp != fingerprint || updated.meta != workflowMeta {
             fingerprint = fp
             lanes = updated.lanes
             workflowMeta = updated.meta
             returnedCount = updated.returned
             agentTotal = updated.total
+            now = Date()
+        } else if Date().timeIntervalSince(now) > 5 {
+            now = Date()
         }
     }
 
