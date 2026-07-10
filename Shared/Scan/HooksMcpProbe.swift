@@ -19,19 +19,31 @@ enum HooksMcpProbe {
         return out
     }
 
+    /// Claude hooks are read from EVERY scope Claude Code itself honors — project
+    /// settings, project-local settings, and the user's global settings. A guardrail
+    /// registered globally protects every repo; scanning only the project file
+    /// false-flagged "no guardrail" on repos guarded at user scope.
     private static func claudeHooks(_ abs: String) -> [Hook] {
-        guard let settings = jsonObject(join(abs, ".claude/settings.json")),
-              let hooksDict = settings["hooks"] as? [String: Any] else { return [] }
+        let sources: [(path: String, scope: String)] = [
+            (join(abs, ".claude/settings.json"), "project"),
+            (join(abs, ".claude/settings.local.json"), "local"),
+            ((NSHomeDirectory() as NSString).appendingPathComponent(".claude/settings.json"), "user"),
+        ]
         var out: [Hook] = []
-        for (event, value) in hooksDict {
-            guard let groups = value as? [[String: Any]] else { continue }
-            for group in groups {
-                let matcher = group["matcher"] as? String
-                let inner = (group["hooks"] as? [[String: Any]]) ?? []
-                for h in inner {
-                    guard let cmd = h["command"] as? String else { continue }
-                    out.append(Hook(src: "claude", event: event, matcher: matcher,
-                                    command: cmd, status: classify(cmd, abs: abs)))
+        for src in sources {
+            guard let settings = jsonObject(src.path),
+                  let hooksDict = settings["hooks"] as? [String: Any] else { continue }
+            for (event, value) in hooksDict {
+                guard let groups = value as? [[String: Any]] else { continue }
+                for group in groups {
+                    let matcher = group["matcher"] as? String
+                    let inner = (group["hooks"] as? [[String: Any]]) ?? []
+                    for h in inner {
+                        guard let cmd = h["command"] as? String else { continue }
+                        out.append(Hook(src: "claude", event: event, matcher: matcher,
+                                        command: cmd, status: classify(cmd, abs: abs),
+                                        scope: src.scope))
+                    }
                 }
             }
         }

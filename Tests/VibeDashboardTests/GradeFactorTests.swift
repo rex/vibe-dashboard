@@ -134,6 +134,32 @@ struct GradeFactorTests {
     }
 }
 
+@Suite("conflict markers are line-anchored")
+struct ConflictAnchorTests {
+    @Test("git-written markers at line start are detected, at file start too")
+    func realMarkersDetected() {
+        #expect(HygieneProbe.hasConflictMarkers(Data("""
+        {
+        <<<<<<< HEAD
+          "a": 1
+        =======
+          "a": 2
+        >>>>>>> branch
+        }
+        """.utf8)))
+        #expect(HygieneProbe.hasConflictMarkers(Data("<<<<<<< HEAD\nx\n>>>>>>> b\n".utf8)))
+    }
+
+    @Test("marker strings inside literals (mid-line) never cry wolf")
+    func literalMarkersIgnored() {
+        // The exact shape that made the scanner flag its own tests and its own
+        // implementation: markers embedded in quoted strings, mid-line.
+        let fixture = #"private let conflict = "{\n<<<<<<< HEAD\n  1\n=======\n  2\n>>>>>>> branch\n}\n""#
+            + "\n" + #"let probe = data.range(of: Data("<<<<<<< ".utf8)) != nil && ">>>>>>> " != ""#
+        #expect(!HygieneProbe.hasConflictMarkers(Data(fixture.utf8)))
+    }
+}
+
 @Suite("hygiene rc-file content gate")
 struct RcSecretTests {
     @Test("an .npmrc of pure config is not a secret; auth entries are")

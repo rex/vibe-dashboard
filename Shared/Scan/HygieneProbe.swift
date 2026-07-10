@@ -135,7 +135,17 @@ enum HygieneProbe {
     }
 
     /// Live merge-conflict markers left in a file — a genuine "agent gave up mid-merge".
+    /// LINE-ANCHORED: git writes conflict markers at column 0, so both markers must
+    /// start a line. A `"<<<<<<< HEAD\n…"` inside a STRING LITERAL (this app's own
+    /// tests and this very file) sits mid-line and must never cry wolf — the scanner
+    /// once flagged its own implementation.
     static func hasConflictMarkers(_ data: Data) -> Bool {
-        data.range(of: Data("<<<<<<< ".utf8)) != nil && data.range(of: Data(">>>>>>> ".utf8)) != nil
+        atLineStart("<<<<<<< ", in: data) && atLineStart(">>>>>>> ", in: data)
+    }
+
+    private static func atLineStart(_ marker: String, in data: Data) -> Bool {
+        let m = Data(marker.utf8)
+        if data.prefix(m.count) == m { return true }
+        return data.range(of: Data("\n".utf8) + m) != nil
     }
 }

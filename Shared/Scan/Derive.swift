@@ -343,9 +343,11 @@ enum Derive {
                 "Committed but never pushed — it isn't really saved until it's on the remote.", "sign + push")
         }
         // hygiene — classic vibe-coding shenanigans
-        if let first = r.hygiene.conflictFiles.first {
-            add(.high, "Hygiene", "merge markers in \(r.hygiene.conflictFiles.count) file\(r.hygiene.conflictFiles.count == 1 ? "" : "s")",
-                "Live merge markers in \(first) — a green build is lying.", "open file")
+        if !r.hygiene.conflictFiles.isEmpty {
+            let n = r.hygiene.conflictFiles.count
+            add(.high, "Hygiene", "merge markers in \(n) file\(n == 1 ? "" : "s")",
+                "Live merge markers in: \(r.hygiene.conflictFiles.joined(separator: " · ")) — a green build is lying.",
+                "open file")
         }
         if let first = r.hygiene.secretFiles.first {
             add(.high, "Hygiene", "secret tracked in git: \((first as NSString).lastPathComponent)",
