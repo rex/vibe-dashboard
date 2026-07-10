@@ -27,6 +27,8 @@ struct FindingsView: View {
     @Environment(FleetStore.self) private var store
     @State private var filter: FindingFilter = .all
     @State private var showWaived = false
+    @AppStorage("vibe.findings.groupByRepo") private var groupByRepo = false
+    @AppStorage("vibe.findings.type") private var typeFilter = ""   // "" = every type
     @AppStorage(WaiverStore.ledgerKey) private var ledgerJSON = ""
 
     /// Findings actively muted by a waiver vs. the still-open remainder. Counts, the
@@ -38,15 +40,49 @@ struct FindingsView: View {
     private var openFindings: [Finding] { store.fleet.findings }
     private var waived: [Finding] { store.fleet.waivedFindings }
 
-    /// The rows the table renders: open findings for the active filter, plus the
-    /// waived ones appended when the user chooses to reveal them.
-    private var tableFindings: [Finding] {
-        let openShown = openFindings.filter { filter.matches($0) }
-        guard showWaived else { return openShown }
-        return openShown + waived.filter { filter.matches($0) }
+    /// Distinct finding types (the `pass` label) on the visible board, for the type
+    /// menu — the open set, plus the waived set when it's revealed.
+    private var types: [String] {
+        Array(Set((showWaived ? openFindings + waived : openFindings).map(\.pass))).sorted()
+    }
+    /// The active type filter, ignored when that type is no longer present (e.g. its
+    /// last finding was just waived) so the feed can never strand itself empty.
+    private var activeType: String { types.contains(typeFilter) ? typeFilter : "" }
+
+    private func matches(_ f: Finding) -> Bool {
+        filter.matches(f) && (activeType.isEmpty || f.pass == activeType)
     }
 
-    private func count(_ sev: Severity) -> Int { openFindings.filter { $0.severity == sev }.count }
+    /// The rows the feed renders: open findings for the active severity+type filter,
+    /// plus the waived ones appended when the user chooses to reveal them.
+    private var shownFindings: [Finding] {
+        let openShown = openFindings.filter(matches)
+        guard showWaived else { return openShown }
+        return openShown + waived.filter(matches)
+    }
+
+    /// Findings grouped by codebase. Each group inherits `shownFindings`' severity
+    /// order; groups are ordered worst-severity-first, then by volume, then name.
+    private var groups: [(id: String, name: String, findings: [Finding])] {
+        Dictionary(grouping: shownFindings) { $0.repoId ?? "" }
+            .map { (id: $0.key, name: $0.value.first?.repoName ?? "—", findings: $0.value) }
+            .sorted { a, b in
+                let sa = a.findings.map(\.severity).min() ?? .low
+                let sb = b.findings.map(\.severity).min() ?? .low
+                if sa != sb { return sa < sb }
+                if a.findings.count != b.findings.count { return a.findings.count > b.findings.count }
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            }
+    }
+
+    /// Severity counts and the open total respect the active TYPE filter, so the
+    /// segmented badges never promise more than the current type slice holds.
+    private func count(_ sev: Severity) -> Int {
+        openFindings.filter { $0.severity == sev && (activeType.isEmpty || $0.pass == activeType) }.count
+    }
+    private var typedOpenCount: Int {
+        openFindings.filter { activeType.isEmpty || $0.pass == activeType }.count
+    }
 
     var body: some View {
         ScrollView {
@@ -57,22 +93,15 @@ struct FindingsView: View {
                     .foregroundStyle(Theme.color.textBright)
 
                 headline
-
-                filterBar
-
+                controlsRow
                 if !waived.isEmpty { waivedToggle }
 
-                VibePanel(flushBody: true) {
-                    if tableFindings.isEmpty {
-                        EmptyState(
-                            icon: openFindings.isEmpty && waived.isEmpty ? "check" : "search",
-                            tone: openFindings.isEmpty && waived.isEmpty ? .ok : .neutral,
-                            text: openFindings.isEmpty && waived.isEmpty
-                                ? "all clear — no surprises across the fleet."
-                                : "no \(filter.label.lowercased()) findings."
-                        )
-                    } else {
-                        FindingsTable(findings: tableFindings)
+                if groupByRepo {
+                    groupedBoard
+                } else {
+                    VibePanel(flushBody: true) {
+                        if shownFindings.isEmpty { emptyState }
+                        else { FindingsTable(findings: shownFindings) }
                     }
                 }
             }
@@ -80,17 +109,86 @@ struct FindingsView: View {
         }
     }
 
-    // The rollup line: N findings · h·m·l breakdown (+ waived disclosure).
+    // MARK: - Board (flat vs grouped by codebase)
+
+    private var groupedBoard: some View {
+        VStack(spacing: Theme.space.x4) {
+            if groups.isEmpty {
+                VibePanel(flushBody: true) { emptyState }
+            } else {
+                ForEach(groups, id: \.id) { g in
+                    VibePanel(flushBody: true) {
+                        VStack(spacing: 0) {
+                            repoHeader(g)
+                            FindingsTable(findings: g.findings)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A tappable codebase header above its findings — jumps to the repo detail.
+    private func repoHeader(_ g: (id: String, name: String, findings: [Finding])) -> some View {
+        let worst = g.findings.map(\.severity).min() ?? .low
+        return Button { app.openRepo(g.id) } label: {
+            HStack(spacing: Theme.space.x2) {
+                VibeIcon("folder-git-2", size: 13, color: Theme.color.textMuted)
+                Text(g.name)
+                    .font(VibeFont.mono(VibeFont.size.sm, .bold))
+                    .foregroundStyle(Theme.color.textBright).lineLimit(1)
+                SeverityTag(severity: worst)
+                Text("\(g.findings.count) finding\(g.findings.count == 1 ? "" : "s")")
+                    .font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textFaint)
+                Spacer(minLength: 0)
+                VibeIcon("arrow-right", size: 12, color: Theme.color.textFaint)
+            }
+            .padding(.horizontal, Theme.space.x4).padding(.vertical, Theme.space.x2_5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.color.surface2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.color.border).frame(height: 1) }
+        .help("Open \(g.name)")
+    }
+
+    @ViewBuilder private var emptyState: some View {
+        let boardEmpty = openFindings.isEmpty && waived.isEmpty
+        EmptyState(
+            icon: boardEmpty ? "check" : "search",
+            tone: boardEmpty ? .ok : .neutral,
+            text: boardEmpty
+                ? "all clear — no surprises across the fleet."
+                : "no findings match \(filterSummary)."
+        )
+    }
+    private var filterSummary: String {
+        var parts: [String] = []
+        if filter != .all { parts.append(filter.label.lowercased()) }
+        if !activeType.isEmpty { parts.append("“\(activeType)”") }
+        return parts.isEmpty ? "this view" : parts.joined(separator: " · ")
+    }
+
+    // MARK: - Headline
+
+    // The rollup line: N findings · h·m·l breakdown (+ active type, + waived).
     private var headline: some View {
         Group {
-            if openFindings.isEmpty {
-                Text("worker swept the fleet — ").foregroundStyle(Theme.color.textSecondary)
-                    + Text(waived.isEmpty ? "every repo in policy" : "open board clear")
-                        .foregroundStyle(Theme.color.ok)
+            if typedOpenCount == 0 {
+                let trulyClear = openFindings.isEmpty
+                Text(trulyClear ? "worker swept the fleet — " : "this slice is clear — ")
+                    .foregroundStyle(Theme.color.textSecondary)
+                    + Text(trulyClear ? (waived.isEmpty ? "every repo in policy" : "open board clear")
+                                      : "\(openFindings.count) open under other filters")
+                        .foregroundStyle(trulyClear ? Theme.color.ok : Theme.color.textMuted)
                     + waivedTail
             } else {
-                Text("\(openFindings.count) finding\(openFindings.count == 1 ? "" : "s") open · ")
+                Text("\(typedOpenCount) finding\(typedOpenCount == 1 ? "" : "s") open")
                     .foregroundStyle(Theme.color.textSecondary)
+                    + (activeType.isEmpty ? Text("")
+                       : Text(" · \(activeType)").foregroundStyle(Theme.color.textMuted))
+                    + Text(" · ").foregroundStyle(Theme.color.textSecondary)
                     + Text("\(count(.high)) high").foregroundStyle(Theme.color.danger)
                     + Text(" · ").foregroundStyle(Theme.color.textSecondary)
                     + Text("\(count(.med)) med").foregroundStyle(Theme.color.warn)
@@ -127,170 +225,72 @@ struct FindingsView: View {
         .help(showWaived ? "hide waived findings" : "show findings you've waived")
     }
 
-    private var filterBar: some View {
-        SegMac(
-            selection: $filter,
-            options: [
-                SegOption(value: .all, label: "all", count: openFindings.count),
-                SegOption(value: .high, label: "high", count: count(.high)),
-                SegOption(value: .med, label: "med", count: count(.med)),
-                SegOption(value: .low, label: "low", count: count(.low)),
-            ]
-        )
-    }
-}
+    // MARK: - Controls (severity · type · grouping)
 
-// MARK: - FindingsTable
-
-/// A reusable, edge-to-edge list of finding rows (drop into a flush `VibePanel`).
-struct FindingsTable: View {
-    let findings: [Finding]
-
-    var body: some View {
-        LazyVStack(spacing: 0) {
-            ForEach(findings) { f in
-                FindingRow(finding: f)
-            }
+    private var controlsRow: some View {
+        HStack(spacing: Theme.space.x3) {
+            SegMac(
+                selection: $filter,
+                options: [
+                    SegOption(value: .all, label: "all", count: typedOpenCount),
+                    SegOption(value: .high, label: "high", count: count(.high)),
+                    SegOption(value: .med, label: "med", count: count(.med)),
+                    SegOption(value: .low, label: "low", count: count(.low)),
+                ]
+            )
+            Spacer(minLength: Theme.space.x2)
+            typeMenu
+            groupToggle
         }
     }
-}
 
-private struct FindingRow: View {
-    let finding: Finding
-    @Environment(AppState.self) private var app
-    @Environment(FleetStore.self) private var store
-    @State private var hover = false
-    @State private var viewTarget: FindingTarget?
-    @AppStorage(WaiverStore.ledgerKey) private var ledgerJSON = ""
-    @AppStorage(WaiverStore.pendingKey) private var pendingWaiverId = ""
-
-    private var repo: Repo? { store.fleet.repo(finding.repoId) }
-    /// The file(s) this finding points at — drives which actions the row offers.
-    private var target: FindingTarget? { FindingTarget.resolve(finding, repo: repo) }
-    /// Is this finding currently muted by an active waiver? Only ever true for rows
-    /// surfaced by the feed's "show waived" reveal.
-    private var waived: Bool { WaiverLedger.decode(ledgerJSON).suppresses(finding.id, now: Date()) }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: Theme.space.x3) {
-            SeverityTag(severity: finding.severity)
-                .frame(width: 48, alignment: .leading)
-
-            VStack(alignment: .leading, spacing: Theme.space.x1_5) {
-                HStack(spacing: Theme.space.x2) {
-                    Pill(text: finding.pass)
-                    if waived { Pill(text: "waived", icon: "shield-check") }
-                    if let name = finding.repoName {
-                        HStack(spacing: 5) {
-                            VibeIcon("folder-git-2", size: 11, color: Theme.color.textFaint)
-                            Text(name)
-                                .font(VibeFont.mono(VibeFont.size.xxs))
-                                .foregroundStyle(Theme.color.textMuted)
-                                .lineLimit(1)
-                        }
-                    }
-                }
-                Text(finding.what)
-                    .font(VibeFont.mono(VibeFont.size.sm, .bold))
-                    .foregroundStyle(Theme.color.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(finding.why)
-                    .font(VibeFont.sans(VibeFont.size.xs))
-                    .foregroundStyle(Theme.color.textMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .opacity(waived ? 0.5 : 1)          // a muted finding reads as backgrounded
-
-            HStack(spacing: Theme.space.x2) {
-                if !waived, let fix = finding.fix {
-                    VibeButton(title: fix, icon: "wrench", variant: .accentGhost, size: .sm) {
-                        app.runFix(finding)
-                    }
-                }
-                moreMenu()          // always present — at minimum offers Waive / Un-waive
-            }
-            .fixedSize()
-        }
-        .padding(.horizontal, Theme.space.x4)
-        .padding(.vertical, Theme.space.x3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(hover ? Theme.color.surfaceRaised : .clear)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.color.borderSubtle).frame(height: 1) }
-        .contentShape(Rectangle())
-        .onHover { hover = $0 }
-        .contextMenu { actionItems(target) }
-        .sheet(item: $viewTarget) { FileViewerSheet(app: app, target: $0) }
-    }
-
-    /// The visible ⋯ affordance — a bordered square that opens the same action set as
-    /// the row's right-click menu. Always present: even a finding with no file target
-    /// can still be waived.
-    private func moreMenu() -> some View {
-        Menu { actionItems(target) } label: {
-            VibeIcon("more-horizontal", size: 15, color: Theme.color.textMuted)
-                .frame(width: 30, height: 26)
-                .background(Theme.color.surfaceRaised)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous)
-                    .strokeBorder(Theme.color.borderStrong, lineWidth: 1))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("more actions")
-    }
-
-    /// The applicable secondary actions for a finding — shared by the ⋯ menu and the
-    /// right-click context menu. Target-scoped actions (view/git-status, AI-prompt,
-    /// exclude, gitignore, copy path/name) appear only when a file target fits; the
-    /// Waive / Un-waive action is offered on EVERY finding.
-    @ViewBuilder private func actionItems(_ t: FindingTarget?) -> some View {
-        if let t {
-            if t.isGitStatus {
-                Button("View git status") { viewTarget = t }
-            } else if t.canViewFile {
-                Button("View file") { viewTarget = t }
-            }
-            if t.canPrompt {
-                Button("Copy agent prompt") { app.copyAgentPrompt(for: finding) }
-            }
-            if t.canExclude, let rel = t.relPath, repo?.vibePresent == true {
-                Button("Exclude from architecture scope") { app.requestExclude(repoId: t.repoId, path: rel) }
-            }
-            if t.canGitignore, let rel = t.relPath {
-                Button("Add to .gitignore") {
-                    app.addToGitignore(repoId: t.repoId, repoAbsPath: t.repoAbsPath, relPath: rel)
-                }
-            }
-            if t.isFileScoped, let abs = t.absPath, let rel = t.relPath {
-                Divider()
-                Button("Copy full file path") { app.copy(abs, as: "file path") }
-                Button("Copy file name") { app.copy((rel as NSString).lastPathComponent, as: "file name") }
-            }
+    /// Filter the board to a single finding type (`pass`). Disabled until there's
+    /// more than one type to choose between.
+    private var typeMenu: some View {
+        let on = !activeType.isEmpty
+        return Menu {
+            Button { typeFilter = "" } label: { Text((activeType.isEmpty ? "✓ " : "") + "All types") }
             Divider()
+            ForEach(types, id: \.self) { t in
+                Button { typeFilter = t } label: { Text((activeType == t ? "✓ " : "") + t) }
+            }
+        } label: {
+            HStack(spacing: Theme.space.x1_5) {
+                VibeIcon("layers", size: 12, color: on ? Theme.color.accent : Theme.color.textMuted)
+                Text(on ? activeType : "all types")
+                    .font(VibeFont.mono(VibeFont.size.xxs, .medium))
+                    .foregroundStyle(on ? Theme.color.textBright : Theme.color.textMuted)
+                    .lineLimit(1)
+                VibeIcon("chevron-down", size: 10, color: Theme.color.textFaint)
+            }
+            .padding(.horizontal, Theme.space.x2_5).padding(.vertical, Theme.space.x1_5)
+            .background(on ? Theme.color.accent.opacity(0.14) : Theme.color.surfaceSunken)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous)
+                .strokeBorder(on ? Theme.color.accent.opacity(0.5) : Theme.color.border, lineWidth: 1))
         }
-        if waived {
-            Button("Un-waive — show this finding again") { unwaive() }
-        } else {
-            Button("Waive this finding…") { requestWaive() }
-        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .disabled(types.count < 2 && !on)
+        .help("Filter the board to one finding type")
     }
 
-    /// Stash this finding as the waiver target and open the waiver sheet (which
-    /// resolves the target by id). Opens UI only — the finding isn't hidden until the
-    /// user confirms an expiry in the sheet.
-    private func requestWaive() {
-        pendingWaiverId = finding.id
-        app.openSheet(.waiver)
-    }
-
-    /// Lift every waiver on this finding immediately — it returns to the open feed.
-    private func unwaive() {
-        var ledger = WaiverLedger.decode(ledgerJSON)
-        guard ledger.lift(finding.id) else { return }
-        ledgerJSON = ledger.encoded()
-        store.applyWaivers()   // the finding + its grade weight return instantly
-        app.toast("waiver lifted", finding.what, .info)
+    /// Toggle between one flat severity-sorted list and per-codebase sections.
+    private var groupToggle: some View {
+        Button { groupByRepo.toggle() } label: {
+            HStack(spacing: Theme.space.x1_5) {
+                VibeIcon(groupByRepo ? "folder-git-2" : "list", size: 12,
+                         color: groupByRepo ? Theme.color.textOnAccent : Theme.color.textMuted)
+                Text(groupByRepo ? "grouped" : "group by repo")
+                    .font(VibeFont.mono(VibeFont.size.xxs, .medium))
+                    .foregroundStyle(groupByRepo ? Theme.color.textOnAccent : Theme.color.textMuted)
+            }
+            .padding(.horizontal, Theme.space.x2_5).padding(.vertical, Theme.space.x1_5)
+            .background(groupByRepo ? Theme.color.accent : Theme.color.surfaceSunken)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius.sm, style: .continuous)
+                .strokeBorder(groupByRepo ? Color.clear : Theme.color.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help(groupByRepo ? "Show one flat, severity-sorted list" : "Group findings by codebase")
     }
 }

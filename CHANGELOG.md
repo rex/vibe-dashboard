@@ -3,6 +3,19 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.69.0] — 2026-07-10
+
+### Added
+- **Findings — group by codebase**: a persisted "group by repo" toggle breaks
+  the feed into per-repo sections, each with a tappable header (worst-severity
+  chip + count) that jumps straight to the repo detail. Sections are ordered
+  worst-severity-first, then by volume, then name.
+- **Findings — filter by type**: a type menu narrows the board to a single
+  finding type (Hygiene, Architecture, Docs, …). Severity badges, the headline,
+  and every count reflect the active type slice; the two filters compose. A type
+  whose last finding gets waived falls back to "all types" so the feed can never
+  strand itself empty.
+
 ## [0.68.0] — 2026-07-10
 
 ### Changed
