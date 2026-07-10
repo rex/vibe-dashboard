@@ -56,7 +56,12 @@ struct AgentPulse: View {
     var color: Color = Theme.color.warn
     var size: CGFloat = 13
 
-    private static let step: TimeInterval = 0.45
+    private static let step: TimeInterval = 0.6
+    /// One shared phase for EVERY pulse instance: `.periodic(from: .now)` gives each
+    /// instance its own phase, so six pulses commit six separate display updates per
+    /// step (~13 commits/s) — and AppKit runs a window layout pass per commit. A
+    /// common epoch makes all pulses tick on the same beat: ~1.7 commits/s total.
+    private static let epoch = Date(timeIntervalSinceReferenceDate: 0)
     private static let patterns: [[CGFloat]] = [
         [0.50, 1.00, 0.68], [0.85, 0.55, 0.95], [0.60, 0.90, 0.45], [1.00, 0.65, 0.80],
     ]
@@ -65,7 +70,7 @@ struct AgentPulse: View {
     var body: some View {
         Group {
             if active {
-                TimelineView(.periodic(from: .now, by: Self.step)) { ctx in
+                TimelineView(.periodic(from: Self.epoch, by: Self.step)) { ctx in
                     bars(tick: Int(ctx.date.timeIntervalSinceReferenceDate / Self.step))
                 }
             } else {

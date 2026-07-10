@@ -105,36 +105,55 @@ enum AgentTranscriptProbe {
     /// (subagents / workflow agents). It extends the session's life and its shown
     /// "last activity" — the parent transcript goes quiet while children work, and
     /// idling out a session mid-workflow would be a lie.
+    ///
+    /// Content-derived facts are CACHED on (mtime, size): detection runs every few
+    /// seconds while agents stream, and re-reading ~1.25 MB per recent transcript
+    /// per pass burned a steady ~20% of a core. Lifecycle stays time-derived.
     static func session(path: String, tool: String, now: Date,
                         descendantActivity: Date? = nil) -> AgentProbe.Session? {
         let childRecent = descendantActivity
             .map { now.timeIntervalSince($0) < AgentProbe.retentionWindow + mtimeSlack } ?? false
-        guard recentlyTouched(path, now: now) || childRecent else { return nil }
-        let head = readPrefix(path, bytes: headBytes)
-        let tail = readSuffix(path, bytes: tailBytes)
-        let embedded = newestTimestamp(in: tail) ?? newestTimestamp(in: head)
-        guard let last = [embedded, descendantActivity].compactMap({ $0 }).max(),
-              let state = AgentProbe.lifecycle(age: now.timeIntervalSince(last)),
-              let cwd = newestCwd(in: tail) ?? firstCwd(in: head),
-              !cwd.isEmpty else { return nil }
+        guard let attrs = try? fm.attributesOfItem(atPath: path),
+              let mtime = attrs[.modificationDate] as? Date else { return nil }
+        let recentOwn = now.timeIntervalSince(mtime) < AgentProbe.retentionWindow + mtimeSlack
+        guard recentOwn || childRecent else { return nil }
 
-        let start = firstTimestamp(in: head) ?? last
-        let sessionKey = sessionIdentifier(head: head, tail: tail)
-            ?? (path as NSString).lastPathComponent
+        let size = (attrs[.size] as? UInt64) ?? 0
+        let facts = TranscriptFactsCache.facts(path: path, mtime: mtime, size: size) {
+            parseFacts(path: path, tool: tool)
+        }
+        guard let last = [facts.last, descendantActivity].compactMap({ $0 }).max(),
+              let state = AgentProbe.lifecycle(age: now.timeIntervalSince(last)),
+              let cwd = facts.cwd, !cwd.isEmpty else { return nil }
+
         let shape = transcriptShape(path: path, tool: tool)
         return AgentProbe.Session(
-            id: "\(tool):\(sessionKey)",
+            id: "\(tool):\(facts.sessionKey ?? (path as NSString).lastPathComponent)",
             pid: 0,
             tool: tool,
             cwd: normalizedPath(cwd),
-            elapsed: RelTime.compact(now.timeIntervalSince(start)),
+            elapsed: RelTime.compact(now.timeIntervalSince(facts.start ?? last)),
             lastActivity: last,
             state: state,
             kind: shape.kind,
             transcriptPath: path,
             workflowId: shape.workflowId,
-            telemetry: SessionTelemetry.read(tail: tail, tool: tool)
+            telemetry: facts.telemetry
         )
+    }
+
+    /// The expensive part — head+tail reads and line parsing. Pure function of the
+    /// file content; called only when (mtime, size) changed.
+    private static func parseFacts(path: String, tool: String) -> TranscriptFacts {
+        let head = readPrefix(path, bytes: headBytes)
+        let tail = readSuffix(path, bytes: tailBytes)
+        var f = TranscriptFacts()
+        f.last = newestTimestamp(in: tail) ?? newestTimestamp(in: head)
+        f.cwd = newestCwd(in: tail) ?? firstCwd(in: head)
+        f.start = firstTimestamp(in: head) ?? f.last
+        f.sessionKey = sessionIdentifier(head: head, tail: tail)
+        f.telemetry = SessionTelemetry.read(tail: tail, tool: tool)
+        return f
     }
 
     static func normalizedPath(_ path: String) -> String {
