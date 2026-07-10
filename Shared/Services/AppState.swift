@@ -76,8 +76,8 @@ final class AppState {
 
     init() {
         if let d = UserDefaults.standard.dictionary(forKey: Self.navKey) {
-            if let v = d["view"] as? String, let av = AppView(rawValue: v) { view = av }
-            selectedId = d["selectedId"] as? String
+            // Panels are remembered; the VIEW is not — every launch opens on the
+            // Fleet overview (Pierce's call), not wherever the last session ended.
             inspectorOpen = (d["inspectorOpen"] as? Bool) ?? true
             consoleOpen = (d["consoleOpen"] as? Bool) ?? false
         }

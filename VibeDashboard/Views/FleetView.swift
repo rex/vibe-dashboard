@@ -24,20 +24,27 @@ struct FleetView: View {
                 }
 
                 VibePanel(glow: t.danger == 0, flushBody: true) {
-                    // Compact tiles: 108pt minimum + StatTile's dense mode keeps all
-                    // nine on one row at normal window widths (they were forcing the
-                    // window comically wide).
-                    let cols = [GridItem(.adaptive(minimum: 108), spacing: 1)]
-                    LazyVGrid(columns: cols, spacing: 1) {
-                        StatTile(value: "\(t.repos)", label: "repos", tone: .neutral, icon: "folder-git-2")
-                        StatTile(value: "\(t.compliance)", unit: "%", label: "compliance", tone: complianceTone(t.compliance), icon: "gauge")
-                        StatTile(value: "\(t.agentsActive)", label: "working", tone: t.agentsActive > 0 ? .warn : .ok, icon: "bot") { app.goView(.agents) }
-                        StatTile(value: "\(t.abandonedWorktrees)", label: "abandoned", tone: t.abandonedWorktrees > 0 ? .danger : .ok, icon: "git-branch") { app.goView(.agents) }
-                        StatTile(value: "\(t.bloatedDocs)", label: "doc bloat", tone: t.bloatedDocs > 0 ? .danger : .ok, icon: "file-warning") { app.goView(.agents) }
-                        StatTile(value: "\(t.surprises)", label: "surprises", tone: t.surprises > 0 ? .danger : .ok, icon: "triangle-alert") { app.goView(.findings) }
-                        StatTile(value: "\(t.godFiles)", label: "god files", tone: t.godFiles > 0 ? .danger : .ok, icon: "file-code-2")
-                        StatTile(value: "\(t.dirty)", label: "dirty trees", tone: t.dirty > 0 ? .warn : .ok, icon: "git-commit-horizontal")
-                        StatTile(value: "\(t.mcpFailed)", label: "mcp failed", tone: t.mcpFailed > 0 ? .danger : .ok, icon: "waypoints")
+                    // One row, equal widths, filling the panel — no dead space, no
+                    // second-row wrap, centered numbers.
+                    HStack(spacing: 1) {
+                        StatTile(value: "\(t.repos)", label: "repos", tone: .neutral, icon: "folder-git-2",
+                                 help: "Managed repos in view (workspaces not counted)")
+                        StatTile(value: "\(t.compliance)", unit: "%", label: "compliance", tone: complianceTone(t.compliance), icon: "gauge",
+                                 help: "Average compliance score across visible repos — 100 minus each repo's deductions")
+                        StatTile(value: "\(t.agentsActive)", label: "working", tone: t.agentsActive > 0 ? .warn : .ok, icon: "bot",
+                                 help: "Live agent sessions detected right now — click for the Agents module") { app.goView(.agents) }
+                        StatTile(value: "\(t.abandonedWorktrees)", label: "abandoned", tone: t.abandonedWorktrees > 0 ? .danger : .ok, icon: "git-branch",
+                                 help: "Worktrees with no commit in 30+ days — click to review sprawl") { app.goView(.agents) }
+                        StatTile(value: "\(t.bloatedDocs)", label: "doc bloat", tone: t.bloatedDocs > 0 ? .danger : .ok, icon: "file-warning",
+                                 help: "Repos whose TASK_STATE/AGENTS docs exceed the hard line limit") { app.goView(.agents) }
+                        StatTile(value: "\(t.surprises)", label: "surprises", tone: t.surprises > 0 ? .danger : .ok, icon: "triangle-alert",
+                                 help: "Open findings across the visible fleet (waived excluded) — click for the feed") { app.goView(.findings) }
+                        StatTile(value: "\(t.godFiles)", label: "god files", tone: t.godFiles > 0 ? .danger : .ok, icon: "file-code-2",
+                                 help: "Files over the hard line limit and in scope (exclude_globs respected)")
+                        StatTile(value: "\(t.dirty)", label: "dirty trees", tone: t.dirty > 0 ? .warn : .ok, icon: "git-commit-horizontal",
+                                 help: "Repos with uncommitted changes in the working tree")
+                        StatTile(value: "\(t.mcpFailed)", label: "mcp failed", tone: t.mcpFailed > 0 ? .danger : .ok, icon: "waypoints",
+                                 help: "Configured MCP servers whose recent calls failed")
                     }
                     .background(Theme.color.border)
                 }
@@ -231,6 +238,7 @@ struct GateStrip: View {
                     .background(g.status == .fail ? Theme.color.dangerSurface : g.status == .warn ? Theme.color.warnSurface : Theme.color.surfaceSunken)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.radius.xs))
                     .overlay(RoundedRectangle(cornerRadius: Theme.radius.xs).strokeBorder(g.status == .fail ? Theme.color.dangerLine : g.status == .warn ? Theme.color.warnLine : Theme.color.border, lineWidth: 1))
+                    .help("\(g.name) · \(g.command)\n\(g.detail)")
             }
         }
     }
@@ -241,16 +249,20 @@ struct AgentCell: View {
     var body: some View {
         if let a = repo.agent, a.active {
             HStack(spacing: 7) {
-                AgentPulse(active: true, color: repo.health == .danger ? Theme.color.danger : Theme.color.warn, size: 12)
+                AgentPulse(active: a.state == .active, color: repo.health == .danger ? Theme.color.danger : Theme.color.warn, size: 12)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(a.tool ?? "agent").font(VibeFont.mono(VibeFont.size.xs, .bold)).foregroundStyle(repo.health == .danger ? Theme.color.danger : Theme.color.warn)
                     Text("\(a.elapsed ?? "—") · \(a.filesTouched)f").font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textMuted)
                 }
             }
+            .help("\(a.tool ?? "agent") session · \(a.state.rawValue) · \(a.filesTouched) files changed"
+                  + (a.model.map { " · \($0)" } ?? "") + " · last activity \(a.lastActivity)")
         } else if repo.serena?.active == true {
             HStack(spacing: 6) { VibeIcon("waypoints", size: 12, color: Theme.color.info); Text("serena").font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textSecondary) }
+                .help("Serena project active — LSP index available to agents")
         } else {
             Text("idle · \(repo.agent?.lastActivity ?? "—")").font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(Theme.color.textFaint).lineLimit(1)
+                .help("No live agent session detected in this repo")
         }
     }
 }
@@ -268,5 +280,7 @@ struct DocsCell: View {
             Text("\(k(ts.lines)) ln").font(VibeFont.mono(VibeFont.size.xxs)).foregroundStyle(ts.status == .ok ? Theme.color.textMuted : Theme.color.tone(ts.status.tone))
             if cl.status != .ok { VibeIcon("history", size: 12, color: Theme.color.tone(cl.status.tone)) }
         }
+        .help("TASK_STATE.md: \(ts.lines) lines"
+              + (cl.status == .ok ? " · changelog current" : " · CHANGELOG \(cl.behind) commits behind"))
     }
 }

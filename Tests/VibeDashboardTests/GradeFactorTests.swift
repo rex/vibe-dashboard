@@ -2,6 +2,7 @@
 // critical overrides, caps, and the factor↔score↔health agreement invariant.
 
 import Testing
+import Foundation
 @testable import VibeDashboard
 
 @Suite("severity-weighted grading")
@@ -97,5 +98,68 @@ struct GradeFactorTests {
         let f = Derive.factors(r, signedRequired: false)
         #expect(Derive.compliance(r, signedRequired: false) == Derive.score(f))
         #expect(Derive.health(r, signedRequired: false) == Derive.healthBand(f))
+    }
+
+    @Test("a waived finding removes its factor — grade and feed agree")
+    func waiversRemoveWeight() {
+        let r = repo { $0.hygiene.secretFiles = ["/t/.npmrc"] }
+        let finding = Finding(severity: .high, pass: "Hygiene",
+                              what: "secret tracked in git: .npmrc", why: "", fix: nil)
+        let waived = Derive.WaivedFacts.parse([finding])
+        #expect(waived.secrets)
+        let f = Derive.factors(r, signedRequired: false, waived: waived)
+        #expect(f.isEmpty)
+        #expect(Derive.score(f) == 100)
+        #expect(Derive.healthBand(f) == .ok)
+    }
+
+    @Test("waived god-files stop counting; unwaived ones still do")
+    func waivedGodFilePartial() {
+        let r = repo { $0.census.godFiles = [FileLines(path: "a.swift", lines: 500),
+                                             FileLines(path: "b.swift", lines: 600)] }
+        let waived = Derive.WaivedFacts.parse([
+            Finding(severity: .med, pass: "Census", what: "god-file: a.swift", why: "", fix: nil),
+        ])
+        let f = Derive.factors(r, signedRequired: false, waived: waived)
+        #expect(f.first?.label == "1 god-file")
+        #expect(f.first?.delta == -8)
+    }
+
+    @Test("dirty waiver text parses despite containing 'committed'")
+    func waivedFactsParseOrder() {
+        let w = Derive.WaivedFacts.parse([
+            Finding(severity: .high, pass: "Worktree", what: "3 uncommitted changes", why: "", fix: nil),
+        ])
+        #expect(w.dirty && !w.trackedJunk)
+    }
+}
+
+@Suite("hygiene rc-file content gate")
+struct RcSecretTests {
+    @Test("an .npmrc of pure config is not a secret; auth entries are")
+    func npmrcContent() {
+        #expect(!HygieneProbe.rcFileLeaksCredentials("engine-strict=true\nregistry=https://r.example\n"))
+        #expect(HygieneProbe.rcFileLeaksCredentials("//registry.npmjs.org/:_authToken=npm_abc123"))
+        #expect(HygieneProbe.rcFileLeaksCredentials("machine github.com login me password hunter2"))
+        #expect(HygieneProbe.isCredentialRcFile("/x/.npmrc"))
+        #expect(!HygieneProbe.isCredentialRcFile("/x/.env"))
+    }
+}
+
+@Suite("agent refresh change gating")
+struct AgentChangeGateTests {
+    private func info(_ id: String, at: Date, files: Int = 0) -> AgentInfo {
+        var a = AgentInfo(); a.id = id; a.lastActivityAt = at; a.filesTouched = files; return a
+    }
+
+    @Test("pure timestamp drift under a minute is NOT a meaningful change")
+    func timestampDriftIgnored() {
+        let t = Date(timeIntervalSince1970: 1_000_000)
+        let old = [info("s1", at: t)]
+        #expect(!FleetStore.agentsMeaningfullyDiffer(old, [info("s1", at: t.addingTimeInterval(20))]))
+        #expect(FleetStore.agentsMeaningfullyDiffer(old, [info("s1", at: t.addingTimeInterval(90))]))
+        #expect(FleetStore.agentsMeaningfullyDiffer(old, [info("s2", at: t)]))
+        #expect(FleetStore.agentsMeaningfullyDiffer(old, [info("s1", at: t, files: 3)]))
+        #expect(FleetStore.agentsMeaningfullyDiffer(old, []))
     }
 }

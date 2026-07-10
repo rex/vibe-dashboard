@@ -50,7 +50,8 @@ enum Derive {
     // fraud, conflicts, secrets, an unguarded live agent), which force danger
     // regardless of how clean everything else is.
 
-    static func factors(_ r: Repo, signedRequired: Bool) -> [GradeFactor] {
+    static func factors(_ r: Repo, signedRequired: Bool,
+                        waived: WaivedFacts = WaivedFacts()) -> [GradeFactor] {
         var f: [GradeFactor] = []
         func add(_ label: String, _ delta: Int, _ tone: VibeTone,
                  critical: Bool = false, _ detail: String) {
@@ -60,36 +61,36 @@ enum Derive {
 
         // ---- critical: red no matter what else looks like ----
         switch r.management {
-        case .unmanaged:
+        case .unmanaged where !waived.management:
             add("unmanaged — no VIBE.yaml", -30, .danger, critical: true,
                 "no policy governs this repo; agents have worked here with zero guardrails")
-        case .partial:
+        case .partial where !waived.management:
             add("no Makefile — gates can't run", -12, .warn,
                 "policy is declared but nothing can execute it")
-        case .skeleton: break
+        default: break
         }
-        if r.vibeMalformed {
+        if r.vibeMalformed, !waived.policy {
             add("VIBE.yaml won't parse", -25, .danger, critical: true,
                 "a policy file exists but silently enforces nothing")
-        } else if isPolicyStub(r) {
+        } else if isPolicyStub(r), !waived.policy {
             add("VIBE.yaml declares no enforceable policy", -25, .danger, critical: true,
                 "parses as managed while governing nothing")
         }
-        if !r.hygiene.conflictFiles.isEmpty {
+        if !r.hygiene.conflictFiles.isEmpty, !waived.conflicts {
             add("merge markers in \(r.hygiene.conflictFiles.count) file\(plural(r.hygiene.conflictFiles.count))",
                 -30, .danger, critical: true, "live <<<<<<< markers — a green build is lying")
         }
-        if !r.hygiene.secretFiles.isEmpty {
+        if !r.hygiene.secretFiles.isEmpty, !waived.secrets {
             add("\(r.hygiene.secretFiles.count) secret\(plural(r.hygiene.secretFiles.count)) tracked in git",
                 -25, .danger, critical: true, ".env / keys committed — rotate and remove")
         }
-        if r.agentActive && !r.hasActiveGuardrail() {
+        if r.agentActive && !r.hasActiveGuardrail(), !waived.guardrail {
             add("live agent with no guardrail", -15, .danger, critical: true,
                 "an agent is editing with no PreToolUse hook to intercept it")
         }
 
         // ---- proportional: scale with how bad it actually is ----
-        if !r.worktree.clean {
+        if !r.worktree.clean, !waived.dirty {
             let n = max(r.worktree.unstaged, 1)
             var delta = n <= 2 ? -8 : n <= 10 ? -14 : -20
             var label = "\(n) uncommitted file\(plural(n))"
@@ -99,68 +100,113 @@ enum Derive {
             }
             add(label, delta, .warn, "uncommitted work on disk — gone if the tree is lost")
         }
-        if r.worktree.unpushed > 0 {
+        if r.worktree.unpushed > 0, !waived.unpushed {
             let n = r.worktree.unpushed
             add("\(n) unpushed commit\(plural(n))", n <= 2 ? -6 : -12, .warn,
                 "committed but not on any remote — not really saved")
         }
-        let gods = r.census.godFiles.count
+        let gods = r.census.godFiles.filter { !waived.godPaths.contains($0.path) }.count
         if gods > 0 {
             add("\(gods) god-file\(plural(gods))", -8 * min(gods, 3), gods >= 3 ? .danger : .warn,
                 "over the hard line limit and in scope")
         }
-        if signedRequired && !r.worktree.signed {
+        if signedRequired && !r.worktree.signed, !waived.unsigned {
             add("unsigned commits (policy requires signing)", -15, .warn,
                 "workflow.signed_commits_required is true; HEAD isn't signed")
         }
         let missingHooks = r.hooks.filter { $0.status == .missing }.count
-        if missingHooks > 0 {
+        if missingHooks > 0, !waived.hooksMissing {
             add("\(missingHooks) hook\(plural(missingHooks)) point at missing scripts", -10, .warn,
                 "wired in settings but not on disk — the gate runs nothing")
         }
         let stubHooks = r.hooks.filter { $0.status == .nothing }.count
-        if stubHooks > 0 {
+        if stubHooks > 0, !waived.hooksStub {
             add("\(stubHooks) stub hook\(plural(stubHooks))", -6, .warn,
                 "installed but enforces nothing")
         }
-        if r.docs.taskState.status == .fail {
+        if r.docs.taskState.status == .fail, !waived.taskState {
             add("TASK_STATE.md over hard limit", -6, .warn,
                 "\(r.docs.taskState.lines) lines — a dumping ground, not a plan")
         }
-        if r.docs.changelog.status == .fail {
+        if r.docs.changelog.status == .fail, !waived.changelog {
             add("CHANGELOG \(r.docs.changelog.behind) behind", -6, .warn,
                 "release notes are fiction right now")
         }
-        if !r.hygiene.trackedJunk.isEmpty {
+        if !r.hygiene.trackedJunk.isEmpty, !waived.trackedJunk {
             add("dependency dirs committed", -8, .warn,
                 r.hygiene.trackedJunk.joined(separator: ", "))
         }
         let abandoned = r.worktrees.filter { $0.state == .abandoned }.count
-        if abandoned > 0 {
+        if abandoned > 0, !waived.worktrees {
             add("\(abandoned) abandoned worktree\(plural(abandoned))", -4 * min(abandoned, 2), .warn,
                 "created and forgotten")
         }
-        if let cov = r.coverage, let floor = r.coverageFloor, cov < floor {
+        if let cov = r.coverage, let floor = r.coverageFloor, cov < floor, !waived.coverage {
             add("coverage \(cov)% under floor \(floor)%", -min(10, (floor - cov) / 2), .warn,
                 "below the declared minimum")
         }
-        if r.drift.behind != nil {
+        if r.drift.behind != nil, !waived.drift {
             add("skeleton \(r.drift.behind ?? "behind")", -5, .warn,
                 "stamped \(r.drift.version ?? "—") vs fleet-latest \(r.drift.latest ?? "—")")
         }
         let failedMcp = r.mcp.filter { $0.status == .failed }.count
-        if failedMcp > 0 {
+        if failedMcp > 0, !waived.mcp {
             add("\(failedMcp) MCP server\(plural(failedMcp)) failing", -3, .warn, "recent calls failed")
         }
-        if !r.hygiene.junkFiles.isEmpty {
+        if !r.hygiene.junkFiles.isEmpty, !waived.junkFiles {
             add("\(r.hygiene.junkFiles.count) stray backup/dupe file\(plural(r.hygiene.junkFiles.count))",
                 -3, .neutral, "Finder/agent leftovers")
         }
-        if r.hygiene.stashCount > 0 {
+        if r.hygiene.stashCount > 0, !waived.stashes {
             add("\(r.hygiene.stashCount) forgotten stash\(r.hygiene.stashCount == 1 ? "" : "es")",
                 -2, .neutral, "work parked in git stash")
         }
         return f
+    }
+
+    /// Which graded FACTS the user has actively waived — parsed from the waived
+    /// findings' stable pass/what strings, so a waiver removes both the finding AND
+    /// its grade weight (they can never disagree). Waiving a critical is allowed:
+    /// a waiver is a conscious, time-boxed acceptance, and it stays visible in the
+    /// waived list until it expires.
+    struct WaivedFacts: Sendable, Hashable {
+        var management = false, policy = false, conflicts = false, secrets = false
+        var guardrail = false, dirty = false, unpushed = false, unsigned = false
+        var hooksMissing = false, hooksStub = false, taskState = false, changelog = false
+        var trackedJunk = false, junkFiles = false, stashes = false, coverage = false
+        var drift = false, worktrees = false, mcp = false
+        var godPaths: Set<String> = []
+
+        static func parse(_ waived: [Finding]) -> WaivedFacts {
+            var w = WaivedFacts()
+            for f in waived {
+                let what = f.what
+                if what.hasPrefix("god-file: ") {
+                    w.godPaths.insert(String(what.dropFirst("god-file: ".count)))
+                } else if what.contains("UNMANAGED") || what.contains("no Makefile") {
+                    w.management = true
+                } else if what.contains("unparseable") || what.contains("declares no enforceable") {
+                    w.policy = true
+                } else if what.contains("merge markers") { w.conflicts = true }
+                else if what.hasPrefix("secret tracked") { w.secrets = true }
+                else if what.contains("no PreToolUse guardrail") { w.guardrail = true }
+                else if what.contains("uncommitted") { w.dirty = true }
+                else if what.contains("not pushed") { w.unpushed = true }
+                else if what.contains("unsigned commits") { w.unsigned = true }
+                else if what.contains("missing script") { w.hooksMissing = true }
+                else if what.contains("enforces nothing") { w.hooksStub = true }
+                else if what.hasPrefix("TASK_STATE.md") { w.taskState = true }
+                else if what.hasPrefix("CHANGELOG.md") { w.changelog = true }
+                else if what.contains("backup/dupe") { w.junkFiles = true }
+                else if what.contains("stash") { w.stashes = true }
+                else if what.hasPrefix("coverage") { w.coverage = true }
+                else if what.hasPrefix("skeleton") { w.drift = true }
+                else if what.contains("abandoned worktree") { w.worktrees = true }
+                else if f.pass == "MCP" { w.mcp = true }
+                else if f.pass == "Hygiene" && what.contains("committed") { w.trackedJunk = true }
+            }
+            return w
+        }
     }
 
     /// compliance = 100 + Σdelta, clamped. The factor list and the score can never

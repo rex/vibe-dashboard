@@ -70,6 +70,7 @@ struct Repo: Identifiable, Sendable, Hashable {
     var serena: SerenaState? = nil
     var surprises: [Finding] = []
     var gradeFactors: [GradeFactor] = []   // the "why this grade" breakdown (empty = clean bill)
+    var waivedSurprises: [Finding] = []    // findings actively waived — out of the feed AND the grade
 
     // local-only signals
     var build = RepoBuild()

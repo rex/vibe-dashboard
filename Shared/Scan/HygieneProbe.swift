@@ -19,7 +19,15 @@ enum HygieneProbe {
         // keys) yet never flags a .env.example or a source file that merely mentions
         // "credentials". Managed repos have small trees, so listing all tracked files is
         // cheap; the classifier does the precise work git pathspecs used to.
-        h.secretFiles = (await tracked(abs, [])).filter { isTrackedSecret($0) }
+        h.secretFiles = (await tracked(abs, [])).filter { rel in
+            guard isTrackedSecret(rel) else { return false }
+            // Credential rc-files are only a secret if they CONTAIN credentials —
+            // an .npmrc holding just `engine-strict=true` must not cry wolf.
+            guard isCredentialRcFile(rel) else { return true }
+            let head = FileManager.default.contents(atPath: (abs as NSString).appendingPathComponent(rel))
+                .map { String(decoding: $0.prefix(8192), as: UTF8.self) } ?? ""
+            return rcFileLeaksCredentials(head)
+        }
 
         // Dependency / build output committed to git — never belongs in a repo.
         let junkSpecs = [":(glob)**/node_modules/**", ":(glob)**/DerivedData/**", ":(glob)**/.venv/**",
@@ -51,10 +59,26 @@ enum HygieneProbe {
         if ["id_rsa", "id_dsa", "id_ed25519", "id_ecdsa"].contains(name) { return true }
         // 2. Env family — flagged unless it's a committed example/sample/template/dist.
         if name == ".env" || name.hasPrefix(".env.") || name.hasSuffix(".env") { return !isSafeExampleEnv(path) }
-        // 3. Credential rc-files — a committed .netrc/.npmrc/.pypirc leaks auth tokens.
+        // 3. Credential rc-files — flagged only when their CONTENT carries auth
+        //    material (the probe does the read; see rcFileLeaksCredentials).
         if [".netrc", ".npmrc", ".pypirc"].contains(name) { return true }
         // 4. Cloud credentials + service-account keys (config-shaped, so example-guarded).
         return isCredentialFile(name)
+    }
+
+    /// Is this one of the rc-files whose secrecy depends on CONTENT? (.netrc /
+    /// .npmrc / .pypirc are config files first; only auth entries make them secrets.)
+    static func isCredentialRcFile(_ path: String) -> Bool {
+        [".netrc", ".npmrc", ".pypirc"].contains((path as NSString).lastPathComponent.lowercased())
+    }
+
+    /// Does an rc-file's content actually carry credentials? Pure + testable — an
+    /// `.npmrc` of `engine-strict=true` is configuration, not a leak; `_authToken=`,
+    /// `password`, or a `.netrc` `machine … login … password …` block is.
+    static func rcFileLeaksCredentials(_ content: String) -> Bool {
+        let lower = content.lowercased()
+        return ["_auth", "password", "token", "machine ", "login ", "api_key", "apikey"]
+            .contains { lower.contains($0) }
     }
 
     /// Cloud-credential / service-account files. Bare `credentials` (no extension) is

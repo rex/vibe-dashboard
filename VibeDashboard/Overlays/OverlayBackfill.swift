@@ -25,6 +25,8 @@ struct BackfillSheet: View {
     @State private var unparsed = 0                     // Skill lines that matched but wouldn't parse
     @State private var agentsViewError: String?   // non-nil ⇒ AgentsView query/DB error
     @State private var done: Set<String> = []   // "evidenceId|repoId" recorded this session
+    @State private var selected: Set<String> = []   // marks queued for the batch record
+    @State private var batching = false
 
     private func recordedNow(_ repo: Repo, _ e: SkillEvidence) -> Bool {
         repo.skills.contains { $0.skillId == e.skillId } || done.contains(e.id + "|" + repo.id)
@@ -95,16 +97,29 @@ struct BackfillSheet: View {
                             FileCard(caption: "exact matches · \(c.exacts.count)") {
                                 ForEach(c.exacts) { m in
                                     BackfillRow(title: m.ev.skillId, subtitle: exactSubtitle(m),
-                                                version: TranscriptProbe.installedVersion(m.ev.skillId)) { record(m.ev, m.repo) }
+                                                version: TranscriptProbe.installedVersion(m.ev.skillId),
+                                                selected: selected.contains(m.id),
+                                                onToggle: { toggleSelect(m.id) }) { record(m.ev, m.repo) }
                                 }
                             }
                         }
                         ForEach(c.groups) { g in
                             FileCard(caption: groupCaption(g)) {
                                 ForEach(g.children) { child in
-                                    BackfillRow(title: child.name, subtitle: childSubtitle(g, child)) { record(g.ev, child) }
+                                    BackfillRow(title: child.name, subtitle: childSubtitle(g, child),
+                                                selected: selected.contains(g.ev.id + "|" + child.id),
+                                                onToggle: { toggleSelect(g.ev.id + "|" + child.id) }) { record(g.ev, child) }
                                 }
                             }
+                        }
+                        if !selected.isEmpty {
+                            VibeButton(title: batching ? "Recording…"
+                                       : "Record \(selected.count) selected — one commit per repo",
+                                       icon: "check", variant: .primary, size: .md, block: true) {
+                                guard !batching else { return }
+                                batchRecord(c)
+                            }
+                            .help("Applies every selected skill entry, then makes ONE signed VIBE.yaml commit (and push) per repo — no commit spam for multi-skill codebases.")
                         }
                     }
                 }
@@ -138,6 +153,65 @@ struct BackfillSheet: View {
                 .font(VibeFont.mono(VibeFont.size.sm)).foregroundStyle(Theme.color.textMuted)
         }
         .frame(maxWidth: .infinity, alignment: .center).padding(.vertical, Theme.space.x4)
+    }
+
+    private func toggleSelect(_ mark: String) {
+        if selected.contains(mark) { selected.remove(mark) } else { selected.insert(mark) }
+    }
+
+    /// Record every selected entry, grouped so each repo gets ONE surgical VIBE.yaml
+    /// commit + push covering all of its skills — never a commit per row.
+    private func batchRecord(_ c: (exacts: [ExactMatch], groups: [WSGroup])) {
+        var pairs: [(ev: SkillEvidence, repo: Repo)] = []
+        for m in c.exacts where selected.contains(m.id) { pairs.append((m.ev, m.repo)) }
+        for g in c.groups {
+            for child in g.children where selected.contains(g.ev.id + "|" + child.id) {
+                pairs.append((g.ev, child))
+            }
+        }
+        batching = true
+        Task { @MainActor in
+            defer { batching = false }
+            for (_, items) in Dictionary(grouping: pairs, by: { $0.repo.id }) {
+                let repo = items[0].repo
+                let vibePath = (repo.absolutePath as NSString).expandingTildeInPath + "/VIBE.yaml"
+                var recorded: [String] = []
+                for (e, _) in items {
+                    let id = e.skillId, applied = e.lastSeen
+                    let version = TranscriptProbe.installedVersion(id)
+                    let result = await Task.detached {
+                        VibeYamlEditor.recordSkill(vibePath: vibePath, id: id, version: version, applied: applied)
+                    }.value
+                    switch result {
+                    case .skillRecorded(let rid):
+                        recorded.append(rid)
+                        done.insert(e.id + "|" + repo.id)
+                        selected.remove(e.id + "|" + repo.id)
+                    case .alreadyRecorded:
+                        done.insert(e.id + "|" + repo.id)
+                        selected.remove(e.id + "|" + repo.id)
+                    case .noVibe: app.toast("no VIBE.yaml", "\(repo.name) has no policy file to edit", .warn)
+                    case .parseError: app.toast("VIBE.yaml won't parse", "refusing to edit \(repo.name)", .danger)
+                    case .unsafe(let why): app.toast("left untouched", why, .danger)
+                    default: break
+                    }
+                }
+                guard !recorded.isEmpty else { continue }
+                let message = recorded.count == 1
+                    ? "chore(vibe): record \(recorded[0]) skill provenance"
+                    : "chore(vibe): record \(recorded.count) skill provenances (\(recorded.joined(separator: ", ")))"
+                let steps: [(label: String, args: [String])] = [
+                    (label: "stage VIBE.yaml", args: ["add", "--", "VIBE.yaml"]),
+                    (label: "commit VIBE.yaml",
+                     args: GitWrite.commitArgs(message: message) + ["--", "VIBE.yaml"]),
+                    (label: "push", args: GitWrite.pushArgs),
+                ]
+                _ = await app.runGit(repo, host: store.fleet.scanner.host, steps: steps,
+                                     okTitle: "recorded + pushed \(recorded.count) skill\(recorded.count == 1 ? "" : "s")",
+                                     okDetail: "\(repo.name) · one VIBE.yaml commit")
+                await store.rescan(repoId: repo.id)
+            }
+        }
     }
 
     private func record(_ e: SkillEvidence, _ repo: Repo) {
@@ -179,10 +253,19 @@ private struct BackfillRow: View {
     let title: String
     let subtitle: String
     var version: String?
+    var selected = false
+    var onToggle: () -> Void = {}
     var onRecord: () -> Void
 
     var body: some View {
         HStack(spacing: Theme.space.x3) {
+            Button(action: onToggle) {
+                VibeIcon(selected ? "check-circle" : "circle", size: 14,
+                         color: selected ? Theme.color.accent : Theme.color.textGhost)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(selected ? "Selected for the batch record" : "Select for the batch record (one commit per repo)")
             VibeIcon("blocks", size: 14, color: Theme.color.info)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: Theme.space.x2) {

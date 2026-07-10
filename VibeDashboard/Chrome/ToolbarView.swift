@@ -45,6 +45,7 @@ struct ToolbarView: View {
             SegMac(selection: navBinding, options: navWithCounts(t))
             Spacer(minLength: Theme.space.x2)
 
+            instrumentedToggle
             searchButton
             rescanButton
             HStack(spacing: 2) {
@@ -66,6 +67,31 @@ struct ToolbarView: View {
             if o.value == .findings { o.count = t.surprises > 0 ? t.surprises : nil }
             return o
         }
+    }
+
+    /// "VIBE only" — show and count ONLY repos instrumented with a VIBE.yaml.
+    /// Lime = on (filtered fleet). Distinct from ignoring: uninstrumented repos
+    /// aren't unwanted, they're just not under policy yet.
+    private var instrumentedToggle: some View {
+        Button { store.toggleInstrumentedOnly() } label: {
+            HStack(spacing: Theme.space.x1_5) {
+                VibeIcon("shield-check", size: 13,
+                         color: store.instrumentedOnly ? Theme.color.accent : Theme.color.textMuted)
+                Text("VIBE only")
+                    .font(VibeFont.mono(VibeFont.size.xs, .medium))
+                    .foregroundStyle(store.instrumentedOnly ? Theme.color.accent : Theme.color.textSecondary)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 30)
+            .background(store.instrumentedOnly ? Theme.color.okSurface : Theme.color.surfaceSunken)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radius.sm))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius.sm)
+                .strokeBorder(store.instrumentedOnly ? Theme.color.okLine : Theme.color.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help(store.instrumentedOnly
+              ? "Showing only VIBE.yaml-instrumented repos — \(store.uninstrumentedHiddenCount) uninstrumented hidden and excluded from every total. Click to show all."
+              : "Filter to VIBE.yaml-instrumented repos only (removes uninstrumented repos from all views and totals)")
     }
 
     private var searchButton: some View {

@@ -114,6 +114,7 @@ struct Fleet: Sendable {
     var sidebarTree: [SidebarNode] = []   // filesystem tree (repos + structural group dirs) for the sidebar
     var totals = FleetTotals()
     var findings: [Finding] = []
+    var waivedFindings: [Finding] = []   // actively waived — disclosed in the feed's reveal, out of every count
     var skillRollup: [SkillRollup] = []
 
     var sessions: [FleetAgentSession] {
@@ -187,6 +188,9 @@ struct Fleet: Sendable {
 
         f.findings = leaves.flatMap { r in
             r.surprises.map { var s = $0; s.repoId = r.id; s.repoName = r.name; return s }
+        }.sorted { $0.severity < $1.severity }
+        f.waivedFindings = leaves.flatMap { r in
+            r.waivedSurprises.map { var s = $0; s.repoId = r.id; s.repoName = r.name; return s }
         }.sorted { $0.severity < $1.severity }
 
         f.skillRollup = catalog.compactMap { def in

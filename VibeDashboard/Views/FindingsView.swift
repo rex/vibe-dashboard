@@ -33,9 +33,10 @@ struct FindingsView: View {
     /// headline, and the filter bar all reflect the OPEN set — a waived finding is
     /// genuinely off the board until it expires — but the hidden count is disclosed
     /// (never silently dropped) and can be revealed on demand.
-    private var waivedIDs: Set<String> { WaiverLedger.decode(ledgerJSON).activeIDs(now: Date()) }
-    private var openFindings: [Finding] { store.fleet.findings.filter { !waivedIDs.contains($0.id) } }
-    private var waived: [Finding] { store.fleet.findings.filter { waivedIDs.contains($0.id) } }
+    // Grading already split open vs waived (FleetScanner.gradeRepo) — the feed just
+    // renders both sets; a waiver's weight is out of the score, not merely hidden.
+    private var openFindings: [Finding] { store.fleet.findings }
+    private var waived: [Finding] { store.fleet.waivedFindings }
 
     /// The rows the table renders: open findings for the active filter, plus the
     /// waived ones appended when the user chooses to reveal them.
@@ -289,6 +290,7 @@ private struct FindingRow: View {
         var ledger = WaiverLedger.decode(ledgerJSON)
         guard ledger.lift(finding.id) else { return }
         ledgerJSON = ledger.encoded()
+        store.applyWaivers()   // the finding + its grade weight return instantly
         app.toast("waiver lifted", finding.what, .info)
     }
 }

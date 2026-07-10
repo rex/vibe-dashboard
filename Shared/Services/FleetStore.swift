@@ -6,18 +6,28 @@ import SwiftUI
 @Observable
 final class FleetStore {
     private(set) var fleet = Fleet()
+    /// True ONLY during a full fleet sweep. Targeted single-repo refreshes track in
+    /// `refreshingRepoIds` instead — FSEvents-driven per-repo re-probes fire every
+    /// few seconds while an agent hammers a repo, and routing them through this flag
+    /// lit the global "scanning" indicator near-permanently (read as a hung scan).
     private(set) var isScanning = false
+    private(set) var refreshingRepoIds: Set<String> = []
     private(set) var lastScan: Date? = nil
     var roots: [String]
 
     // Ignore list — one-off repos the user doesn't want to manage.
     private(set) var ignoredIds: Set<String> = []
     private(set) var showIgnored = false
+    /// "VIBE only": show — and COUNT — only repos instrumented with a VIBE.yaml.
+    /// Distinct from ignoring: an uninstrumented repo isn't unwanted, it just isn't
+    /// under policy yet, and Pierce mostly reasons about the instrumented fleet.
+    private(set) var instrumentedOnly = false
 
     private var rawFleet = Fleet()
     private var scanner: FleetScanner
     private static let ignoreKey = "vibe.ignored"
     private static let showIgnoredKey = "vibe.showIgnored"
+    private static let instrumentedOnlyKey = "vibe.instrumentedOnly"
 
     /// The live store, for the few main-actor call sites that need repo lookup but
     /// aren't handed it via the environment (e.g. `AppState.runFix` resolving a
@@ -30,6 +40,7 @@ final class FleetStore {
         self.scanner = FleetScanner(roots: r)
         ignoredIds = Set(UserDefaults.standard.stringArray(forKey: Self.ignoreKey) ?? [])
         showIgnored = UserDefaults.standard.bool(forKey: Self.showIgnoredKey)
+        instrumentedOnly = UserDefaults.standard.bool(forKey: Self.instrumentedOnlyKey)
         FleetStore.current = self
     }
 
@@ -64,8 +75,10 @@ final class FleetStore {
     /// lock the machine for one edit. Re-grading is essential: a resolved finding
     /// MUST disappear, else the UI keeps showing a fixed problem as still-open.
     func rescan(repoId: String) async {
-        guard !isScanning, let idx = rawFleet.repos.firstIndex(where: { $0.id == repoId }) else { return }
-        isScanning = true
+        guard !isScanning, !refreshingRepoIds.contains(repoId),
+              let idx = rawFleet.repos.firstIndex(where: { $0.id == repoId }) else { return }
+        refreshingRepoIds.insert(repoId)
+        defer { refreshingRepoIds.remove(repoId) }
         let now = Date()
         let old = rawFleet.repos[idx]
         let abs = (old.absolutePath as NSString).expandingTildeInPath
@@ -77,15 +90,16 @@ final class FleetStore {
         fresh.children = old.children
         fresh.agents = old.agents
         fresh.agent = old.agent
+        // The fleet may have re-scanned or re-shuffled during the await — re-resolve.
+        guard let liveIdx = rawFleet.repos.firstIndex(where: { $0.id == repoId }) else { return }
         var repos = rawFleet.repos
-        repos[idx] = fresh
-        Self.regrade(&repos, at: idx, now: now)
+        repos[liveIdx] = fresh
+        Self.regrade(&repos, at: liveIdx, now: now)
         rawFleet = Fleet.assemble(scanner: rawFleet.scanner, appBuild: rawFleet.appBuild, repos: repos,
                                   activity: rawFleet.activity, autopilot: rawFleet.autopilot,
                                   catalog: rawFleet.skillCatalog)
         applyVisibility()
         lastScan = now
-        isScanning = false
     }
 
     /// Re-grade one repo (drift vs fleet-latest, gates, factors, compliance, health,
@@ -94,14 +108,8 @@ final class FleetStore {
     /// changes guardrail/dirty grading, so agent changes must re-grade too).
     static func regrade(_ repos: inout [Repo], at idx: Int, now: Date) {
         let latest = SkeletonProbe.latest(repos.compactMap { $0.drift.version })
-        let signedReq = repos[idx].signedRequired
-        repos[idx].drift = SkeletonProbe.drift(version: repos[idx].drift.version, latest: latest)
-        repos[idx].gates = Derive.gates(repos[idx])
-        let factors = Derive.factors(repos[idx], signedRequired: signedReq)
-        repos[idx].gradeFactors = factors
-        repos[idx].compliance = Derive.score(factors)
-        repos[idx].health = Derive.healthBand(factors)
-        repos[idx].surprises = Derive.surprises(repos[idx], signedRequired: signedReq, hardLimit: 400)
+        FleetScanner.gradeRepo(&repos[idx], latest: latest,
+                               waivedIDs: WaiverLedger.activeIDsFromDefaults(now: now))
         repos[idx].checkedAt = now
 
         var idxById: [String: Int] = [:]
@@ -173,12 +181,21 @@ final class FleetStore {
         repoFsWatcher?.stop(); repoFsWatcher = nil
     }
 
+    private var lastAgentRefresh = Date.distantPast
+
+    /// Trailing debounce with a 5s floor between refreshes. A busy session appends
+    /// to its transcript every few seconds; refreshing on each write re-enumerated
+    /// ~/.claude/projects and spawned git diff/status per session ~once a second —
+    /// a large slice of the measured CPU burn. 5s keeps cards feeling live.
     private func debouncedAgentRefresh() {
         agentFsDebounce?.cancel()
+        let sinceLast = Date().timeIntervalSince(lastAgentRefresh)
+        let delay = max(1.2, 5.0 - sinceLast)
         agentFsDebounce = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
-            await self?.refreshAgents()
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            self.lastAgentRefresh = Date()
+            await self.refreshAgents()
         }
     }
 
@@ -191,14 +208,20 @@ final class FleetStore {
         for path in paths {
             if let id = RepoEventMapper.repoId(for: path, repos: repoList) { hit.insert(id) }
         }
-        for id in hit { scheduleRepoRescan(id) }
+        for id in hit {
+            // A repo with a LIVE agent churns files continuously — re-probing it
+            // every few seconds is pure heat. Let it settle longer; the 30s agent
+            // monitor and the eventual quiet period keep it honest.
+            let agentBusy = rawFleet.repos.first { $0.id == id }?.agentActive == true
+            scheduleRepoRescan(id, delay: agentBusy ? 10 : 3)
+        }
     }
 
     /// Trailing debounce per repo, with a post-rescan cooldown: the rescan's own
     /// `git status` may refresh `.git/index` and echo one event back — without the
     /// cooldown that echo would re-trigger forever.
-    private func scheduleRepoRescan(_ id: String, delay: TimeInterval = 2.5) {
-        if let last = repoRescanCooldown[id], Date().timeIntervalSince(last) < 3 { return }
+    private func scheduleRepoRescan(_ id: String, delay: TimeInterval = 3) {
+        if let last = repoRescanCooldown[id], Date().timeIntervalSince(last) < 5 { return }
         repoFsDebounce[id]?.cancel()
         repoFsDebounce[id] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
@@ -251,7 +274,12 @@ final class FleetStore {
             let agents = (target[i] ?? []).sorted {
                 ($0.lastActivityAt ?? .distantPast) > ($1.lastActivityAt ?? .distantPast)
             }
-            if repos[i].agents != agents || repos[i].agent != agents.first {
+            // MEANINGFUL change only. A busy session's transcript grows every few
+            // seconds, bumping lastActivity on every probe — treating that as
+            // "changed" reassembled the whole fleet (and re-laid-out every view)
+            // near-continuously: a `sample` showed 16 Fleet.assembles in 5s at ~50%
+            // CPU. Volatile timestamp drift refreshes on the slow poll instead.
+            if Self.agentsMeaningfullyDiffer(repos[i].agents, agents) {
                 let hadAgents = repos[i].agentActive
                 repos[i].agents = agents
                 repos[i].agent = agents.first
@@ -271,6 +299,50 @@ final class FleetStore {
         applyVisibility()
     }
 
+    /// Sessions differ in a way worth re-rendering the fleet for: composition,
+    /// lifecycle state, measured work, or telemetry — OR the freshest activity
+    /// moved by more than a minute (so "last activity Nm ago" stays honest without
+    /// re-assembling on every transcript append).
+    nonisolated static func agentsMeaningfullyDiffer(_ old: [AgentInfo], _ new: [AgentInfo]) -> Bool {
+        guard old.count == new.count else { return true }
+        for (a, b) in zip(old, new) {
+            if a.id != b.id || a.state != b.state || a.sessionKind != b.sessionKind
+                || a.filesTouched != b.filesTouched || a.linesAdded != b.linesAdded
+                || a.linesRemoved != b.linesRemoved || a.model != b.model
+                || a.contextTokens != b.contextTokens || a.note != b.note
+                || a.branch != b.branch { return true }
+            let ta = a.lastActivityAt ?? .distantPast
+            let tb = b.lastActivityAt ?? .distantPast
+            if abs(tb.timeIntervalSince(ta)) > 60 { return true }
+        }
+        return false
+    }
+
+    /// Re-grade every leaf from its EXISTING probe facts — the waiver ledger
+    /// changed, the filesystem didn't, so this is pure CPU and instant. Waiving or
+    /// un-waiving a finding updates compliance/health/feeds everywhere immediately.
+    func applyWaivers() {
+        var repos = rawFleet.repos
+        let latest = SkeletonProbe.latest(repos.compactMap { $0.drift.version })
+        let waivedIDs = WaiverLedger.activeIDsFromDefaults()
+        for i in repos.indices where repos[i].kind != .workspace {
+            FleetScanner.gradeRepo(&repos[i], latest: latest, waivedIDs: waivedIDs)
+        }
+        // Workspace rollups from re-graded children (same shape as the sweep's pass 2).
+        var idxById: [String: Int] = [:]
+        for i in repos.indices { idxById[repos[i].id] = i }
+        for i in repos.indices where repos[i].kind == .workspace {
+            let kids = repos[i].children.compactMap { idxById[$0] }
+            repos[i].health = kids.map { repos[$0].health }.max() ?? .ok
+            repos[i].compliance = kids.isEmpty ? 100
+                : kids.reduce(0) { $0 + repos[$1].compliance } / kids.count
+        }
+        rawFleet = Fleet.assemble(scanner: rawFleet.scanner, appBuild: rawFleet.appBuild, repos: repos,
+                                  activity: rawFleet.activity, autopilot: rawFleet.autopilot,
+                                  catalog: rawFleet.skillCatalog)
+        applyVisibility()
+    }
+
     // ---- ignore / visibility ----
     func isIgnored(_ id: String) -> Bool { ignoredIds.contains(id) }
     var ignoredCount: Int { rawFleet.repos.filter { ignoredIds.contains($0.id) }.count }
@@ -284,12 +356,28 @@ final class FleetStore {
         applyVisibility()
     }
 
+    func toggleInstrumentedOnly() {
+        instrumentedOnly.toggle()
+        UserDefaults.standard.set(instrumentedOnly, forKey: Self.instrumentedOnlyKey)
+        applyVisibility()
+    }
+    /// Repos hidden by the VIBE-only filter right now (0 when the filter is off).
+    var uninstrumentedHiddenCount: Int {
+        guard instrumentedOnly else { return 0 }
+        return rawFleet.repos.filter { $0.kind != .workspace && !$0.vibePresent }.count
+    }
+
     private func persistIgnore() {
         UserDefaults.standard.set(Array(ignoredIds), forKey: Self.ignoreKey)
     }
 
     private func applyVisibility() {
-        let repos = showIgnored ? rawFleet.repos : rawFleet.repos.filter { !ignoredIds.contains($0.id) }
+        var repos = showIgnored ? rawFleet.repos : rawFleet.repos.filter { !ignoredIds.contains($0.id) }
+        if instrumentedOnly {
+            // VIBE-only: uninstrumented repos leave the views AND every rollup/total
+            // (assemble recomputes from what remains). Workspaces stay as structure.
+            repos = repos.filter { $0.kind == .workspace || $0.vibePresent }
+        }
         fleet = Fleet.assemble(scanner: rawFleet.scanner, appBuild: rawFleet.appBuild, repos: repos,
                                activity: rawFleet.activity, autopilot: rawFleet.autopilot,
                                catalog: rawFleet.skillCatalog)

@@ -143,19 +143,13 @@ struct FleetScanner: Sendable {
     /// of how broken its children were — hiding the exact surprises this app exists for).
     private static func grade(_ repos: inout [Repo]) {
         let latestSkeleton = SkeletonProbe.latest(repos.compactMap { $0.drift.version })
+        let waivedIDs = WaiverLedger.activeIDsFromDefaults()
 
         // PASS 1 — grade every leaf repo. Factors are computed ONCE and stored —
         // they ARE the grade (score + health derive from them) and the UI's
         // "why this grade" breakdown reads the same list, so they can't disagree.
         for i in repos.indices where repos[i].kind != .workspace {
-            let signedReq = repos[i].signedRequired
-            repos[i].drift = SkeletonProbe.drift(version: repos[i].drift.version, latest: latestSkeleton)
-            repos[i].gates = Derive.gates(repos[i])
-            let factors = Derive.factors(repos[i], signedRequired: signedReq)
-            repos[i].gradeFactors = factors
-            repos[i].compliance = Derive.score(factors)
-            repos[i].health = Derive.healthBand(factors)
-            repos[i].surprises = Derive.surprises(repos[i], signedRequired: signedReq, hardLimit: 400)
+            gradeRepo(&repos[i], latest: latestSkeleton, waivedIDs: waivedIDs)
             repos[i].checked = "just now"
         }
 
@@ -177,6 +171,26 @@ struct FleetScanner: Sendable {
             repos[i].stack = "workspace"
             repos[i].checked = "just now"
         }
+    }
+
+    /// Grade ONE repo from its already-probed facts: drift vs fleet-latest, gates,
+    /// waiver-aware factors → score/health, and surprises split into open vs waived
+    /// (a waived finding leaves the feed AND the grade, and comes back when its
+    /// waiver expires). Shared by the full sweep, the targeted rescan, and the
+    /// instant regrade that runs when a waiver is recorded or lifted.
+    static func gradeRepo(_ r: inout Repo, latest: String?, waivedIDs: Set<String>) {
+        let signedReq = r.signedRequired
+        r.drift = SkeletonProbe.drift(version: r.drift.version, latest: latest)
+        r.gates = Derive.gates(r)
+        let all = Derive.surprises(r, signedRequired: signedReq, hardLimit: 400)
+        let waived = all.filter { waivedIDs.contains("\(r.id)·\($0.pass)·\($0.what)") }
+        r.surprises = all.filter { !waivedIDs.contains("\(r.id)·\($0.pass)·\($0.what)") }
+        r.waivedSurprises = waived
+        let factors = Derive.factors(r, signedRequired: signedReq,
+                                     waived: Derive.WaivedFacts.parse(waived))
+        r.gradeFactors = factors
+        r.compliance = Derive.score(factors)
+        r.health = Derive.healthBand(factors)
     }
 
     // ---- discovery ----

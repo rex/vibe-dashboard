@@ -270,6 +270,14 @@ private struct WorktreeSprawlPanel: View {
     let abandoned: Int
     @Environment(AppState.self) private var app
 
+    /// Worktrees the prune guard will ACTUALLY remove (abandoned + zero unpushed).
+    /// The button must never promise more than the guard allows — a 179-commit
+    /// abandoned worktree is counted in `abandoned` but will be refused.
+    private var safeCount: Int {
+        sprawl.filter { GitWrite.pruneDecision(state: $0.worktree.state,
+                                               unpushedCommits: $0.worktree.commits) == .remove }.count
+    }
+
     var body: some View {
         VibePanel(flushBody: true) {
             VStack(spacing: 0) {
@@ -289,11 +297,17 @@ private struct WorktreeSprawlPanel: View {
         HStack(spacing: Theme.space.x2) {
             PanelTitle(text: "worktree sprawl")
             Spacer()
-            if abandoned > 0 {
+            if abandoned > safeCount {
+                Text("\(abandoned - safeCount) abandoned kept — unpushed commits")
+                    .font(VibeFont.mono(VibeFont.size.xxs))
+                    .foregroundStyle(Theme.color.textFaint)
+                    .help("Abandoned worktrees still holding commits that exist on no remote are never auto-pruned — push or remove them by hand.")
+            }
+            if safeCount > 0 {
                 Button { app.openSheet(.prune) } label: {
                     HStack(spacing: Theme.space.x1_5) {
                         VibeIcon("trash-2", size: 11, color: Theme.color.danger)
-                        Text("Prune all \(abandoned)")
+                        Text("Prune \(safeCount) safe")
                             .font(VibeFont.mono(VibeFont.size.xxs, .medium))
                             .foregroundStyle(Theme.color.danger)
                     }
@@ -305,7 +319,7 @@ private struct WorktreeSprawlPanel: View {
                         .strokeBorder(Theme.color.dangerLine, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-            } else {
+            } else if abandoned == 0 {
                 StatusBadge(text: "tidy", tone: .ok, small: true)
             }
         }

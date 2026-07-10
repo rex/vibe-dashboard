@@ -122,11 +122,12 @@ struct StatTile: View {
     // 26pt + tight padding: nine tiles fit one row at normal window widths — the
     // old 38pt/18pt tiles forced the window comically wide for the same numbers.
     var numberSize: CGFloat = 26
+    var help: String? = nil
     var action: (() -> Void)? = nil
     @State private var hover = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.space.x1_5) {
+        VStack(alignment: .center, spacing: Theme.space.x1_5) {
             HStack(spacing: 6) {
                 if let icon { VibeIcon(icon, size: 11, color: Theme.color.textMuted) }
                 Text(label).vibeMicroLabel(9)
@@ -142,11 +143,12 @@ struct StatTile: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .padding(.horizontal, Theme.space.x3)
         .padding(.vertical, Theme.space.x2_5)
         .background(hover && action != nil ? Theme.color.surfaceRaised : Theme.color.surface1)
         .contentShape(Rectangle())
+        .help(help ?? label)
         .onHover { hover = $0 }
         .onTapGesture { action?() }
     }
