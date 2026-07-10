@@ -3,6 +3,20 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.70.0] — 2026-07-10
+
+### Added
+- **Release pipeline — Developer ID signing, notarization, stapled DMG**
+  (`make release` → `Scripts/release.sh`). Archives universal (arm64 + x86_64)
+  with hardened runtime on, exports Developer ID, notarizes and staples the app
+  so it verifies offline, then builds / signs / notarizes / staples a
+  drag-to-`/Applications` DMG (pure `hdiutil`, no external dep). Companions:
+  `make release-check` preflights the certificate + notary profile and reports
+  exactly what's missing; `make dmg-local` packages an unsigned DMG for bundle
+  testing without a certificate; `make notary-setup` stores notary credentials
+  once. Un-sandboxed ⇒ direct distribution, never the Mac App Store. One-time
+  setup documented in [docs/RELEASE.md](docs/RELEASE.md).
+
 ## [0.69.0] — 2026-07-10
 
 ### Added

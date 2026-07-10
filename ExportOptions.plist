@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Developer ID (direct distribution, NOT the Mac App Store) export options for
+     `xcodebuild -exportArchive`. `__TEAM_ID__` is substituted at release time by
+     Scripts/release.sh with the team id detected from the Developer ID cert.
+     Manual signing + an explicit Developer ID Application certificate keeps the
+     export headless and deterministic (no Xcode-account round-trips). -->
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>developer-id</string>
+    <key>teamID</key>
+    <string>__TEAM_ID__</string>
+    <key>signingStyle</key>
+    <string>manual</string>
+    <key>signingCertificate</key>
+    <string>Developer ID Application</string>
+    <!-- Hardened runtime is already on (project.yml ENABLE_HARDENED_RUNTIME), a
+         notarization prerequisite. A secure timestamp is applied automatically
+         for Developer ID exports. -->
+</dict>
+</plist>

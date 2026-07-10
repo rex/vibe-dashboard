@@ -47,6 +47,10 @@ help:
 	  "  make check-docs         doc-size audit (AGENTS/CLAUDE/TASK_STATE)" \
 	  "  make audit              privacy + usage-description + no-cocoapods gates" \
 	  "  make validate           build + test + lint + architecture + docs + audit — the gate" \
+	  "  make release-check      preflight the Developer ID + notary setup (no changes)" \
+	  "  make dmg-local          build an UNSIGNED app + DMG into dist/ (testing only)" \
+	  "  make notary-setup       store notary credentials once (ARGS=\"--apple-id … --team-id …\")" \
+	  "  make release            archive → sign → notarize → stapled DMG (the shippable)" \
 	  "  make clean              clean derived data + regenerated project" \
 	  ""
 
@@ -144,8 +148,29 @@ audit:
 	done
 	@echo ">>> audit: all gates passed"
 
+# ----------------------------------------------------------------------------
+# Release — Developer ID signing + notarization + stapled DMG (direct
+# distribution; NOT the Mac App Store). One-time setup in docs/RELEASE.md.
+# ----------------------------------------------------------------------------
+
+.PHONY: release-check
+release-check:
+	@./Scripts/release.sh check
+
+.PHONY: dmg-local
+dmg-local:
+	@./Scripts/release.sh local
+
+.PHONY: notary-setup
+notary-setup:
+	@./Scripts/notary-setup.sh $(ARGS)
+
+.PHONY: release
+release:
+	@./Scripts/release.sh full
+
 .PHONY: clean
 clean:
 	$(XCODEBUILD) -project $(PROJECT) clean 2>/dev/null || true
-	rm -rf build/ DerivedData/ $(PROJECT)
+	rm -rf build/ DerivedData/ dist/ $(PROJECT)
 	@echo ">>> cleaned"

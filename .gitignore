@@ -5,6 +5,7 @@
 xcuserdata/
 DerivedData/
 build/
+dist/
 *.xcarchive
 *.dSYM
 *.dSYM.zip
