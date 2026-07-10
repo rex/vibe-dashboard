@@ -33,7 +33,10 @@ struct AgentWatchWindow: View {
 
     // MARK: - Toolbar
 
-    private var anyStreaming: Bool { model.lanes.contains { $0.isStreaming(now: model.now) } }
+    // A SCALAR, not a lane-array read: reading every lane in the window body would
+    // register the whole window as a dependent of every lane box, undoing the
+    // per-lane isolation.
+    private var anyStreaming: Bool { model.streamingCount > 0 }
 
     /// Workflow windows are NAMED from the plan the orchestrator persisted
     /// (workflows/scripts/<name>-<wfId>.js); everything else uses the repo.
@@ -171,22 +174,24 @@ struct AgentWatchWindow: View {
 
     private var panesArea: some View {
         GeometryReader { geo in
-            if model.lanes.isEmpty {
+            if model.laneBoxes.isEmpty {
                 EmptyState(icon: "radar", tone: .neutral,
                            text: "waiting for transcript events…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 let pad = Theme.space.x3
                 let gap = Theme.space.x2_5
-                let n = CGFloat(model.lanes.count)
+                let n = CGFloat(model.laneBoxes.count)
                 let avail = geo.size.width - pad * 2 - gap * (n - 1)
                 let laneW = max(440, avail / n)
                 ScrollView(.horizontal, showsIndicators: true) {
                     HStack(alignment: .top, spacing: gap) {
-                        ForEach(model.lanes) { lane in
-                            WatchLaneView(lane: lane, fontSize: fontSize,
-                                          expanded: $expanded, followSignal: followSignal,
-                                          now: model.now)
+                        // Boxes are stable references: a content tick mutates ONE box
+                        // and re-renders ONE lane. The window body only re-runs when
+                        // lanes are added/removed (array identity) or chrome changes.
+                        ForEach(model.laneBoxes) { box in
+                            WatchLaneView(box: box, fontSize: fontSize,
+                                          expanded: $expanded, followSignal: followSignal)
                                 .frame(width: laneW)
                         }
                     }

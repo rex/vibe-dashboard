@@ -42,15 +42,34 @@ struct WatchLane: Identifiable, Sendable, Hashable {
     func isStreaming(now: Date) -> Bool { segments.contains { $0.isStreaming(now: now) } }
 }
 
+/// One lane's observable container. Lanes update INDEPENDENTLY: mutating a box
+/// re-renders only that lane's subtree. Publishing a whole `[WatchLane]` array
+/// instead re-rendered every lane (8-wide × hundreds of rows) on every content
+/// tick (~3Hz while streaming) — the sampled 22k-layout-frames/5s main-thread
+/// storm that starved the rest of the app.
+@MainActor
+@Observable
+final class WatchLaneBox: Identifiable {
+    var lane: WatchLane
+    var now = Date()          // per-lane clock: bumped with content or on the slow staleness pass
+    nonisolated let id: Int
+    init(_ lane: WatchLane) {
+        self.lane = lane
+        self.id = lane.id
+    }
+}
+
 @MainActor
 @Observable
 final class AgentWatchModel {
-    private(set) var lanes: [WatchLane] = []
+    private(set) var laneBoxes: [WatchLaneBox] = []   // array identity changes only on add/remove/reorder
     private(set) var workflowMeta = WatchWorkflowMeta()
     private(set) var returnedCount = 0
     private(set) var agentTotal = 0
-    private(set) var now = Date()
+    private(set) var streamingCount = 0   // toolbar pulse reads THIS scalar, never the lane array
     let target: AgentWatchTarget
+
+    var lanes: [WatchLane] { laneBoxes.map(\.lane) }   // action-time snapshot (expand-all, tests)
 
     private var loop: Task<Void, Never>?
     private var fsWatcher: FSEventsWatcher?
@@ -120,23 +139,38 @@ final class AgentWatchModel {
         let updated = await Task.detached(priority: .utility) {
             Self.compute(target: target, prior: snapshot, discover: discover, now: Date())
         }.value
-        let fp = Self.fingerprint(updated.lanes)
-        // Touch observable state ONLY when content actually changed. `now` was
-        // being written unconditionally per tick — every write invalidates every
-        // lane view, and with FSEvents poking per transcript append that meant
-        // continuous full-window layout (~120fps; sampled at 18k layout frames/5s,
-        // 82% CPU) that starved the rest of the app. Status staleness ≤5s is fine:
-        // the streaming badge has a 20s tolerance window.
-        if fp != fingerprint || updated.meta != workflowMeta {
-            fingerprint = fp
-            lanes = updated.lanes
-            workflowMeta = updated.meta
-            returnedCount = updated.returned
-            agentTotal = updated.total
-            now = Date()
-        } else if Date().timeIntervalSince(now) > 5 {
-            now = Date()
+        // PER-LANE application: only a lane whose content changed gets its box
+        // mutated — and only that lane's subtree re-renders. Nothing here writes
+        // whole-window observable state on a content tick; that pattern (array
+        // republish + a shared `now`) re-laid-out all 8 lanes ~3×/s while
+        // streaming (sampled: 22k layout frames/5s) and starved the app.
+        let wall = Date()
+        if laneBoxes.count == updated.lanes.count,
+           zip(laneBoxes, updated.lanes).allSatisfy({ $0.id == $1.id }) {
+            for (box, fresh) in zip(laneBoxes, updated.lanes) {
+                if box.lane != fresh {
+                    box.lane = fresh
+                    box.now = wall
+                } else if wall.timeIntervalSince(box.now) > 5 {
+                    box.now = wall   // slow staleness pass: streaming badge decays honestly
+                }
+            }
+        } else {
+            var existing: [Int: WatchLaneBox] = [:]
+            for box in laneBoxes { existing[box.id] = box }
+            laneBoxes = updated.lanes.map { fresh in
+                if let box = existing[fresh.id] {
+                    if box.lane != fresh { box.lane = fresh; box.now = wall }
+                    return box
+                }
+                return WatchLaneBox(fresh)
+            }
         }
+        if updated.meta != workflowMeta { workflowMeta = updated.meta }
+        if updated.returned != returnedCount { returnedCount = updated.returned }
+        if updated.total != agentTotal { agentTotal = updated.total }
+        let streaming = updated.lanes.filter { $0.isStreaming(now: wall) }.count
+        if streaming != streamingCount { streamingCount = streaming }
     }
 
     struct Snapshot: Sendable {

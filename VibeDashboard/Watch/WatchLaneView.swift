@@ -8,11 +8,17 @@ import SwiftUI
 import AppKit
 
 struct WatchLaneView: View {
-    let lane: WatchLane
+    // The lane arrives as an OBSERVABLE BOX: this view registers on box.lane /
+    // box.now during body, so a content tick re-renders only this lane — never
+    // its 7 siblings. (Passing plain values from the window re-rendered all of
+    // them per tick; that was the main-thread layout storm.)
+    let box: WatchLaneBox
     let fontSize: Double
     @Binding var expanded: Set<String>
     let followSignal: Int
-    let now: Date
+
+    private var lane: WatchLane { box.lane }
+    private var now: Date { box.now }
 
     @State private var follow = true
     @State private var unfollowedAt = 0          // lane event total when the user scrolled away
