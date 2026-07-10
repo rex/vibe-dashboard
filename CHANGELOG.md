@@ -3,6 +3,26 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.53.0] — 2026-07-09
+
+### Changed
+- **Severity-weighted grading**: health is no longer a flat OR that let one
+  dirty file rate like committed secrets. Every problem is a weighted factor;
+  compliance = 100 − deductions, health from the score bands, and critical
+  factors (governance fraud, merge markers, tracked secrets, an unguarded live
+  agent) still force danger. Dirty/unpushed scale with size; a live session
+  halves the dirty penalty.
+- **"Why this grade"**: every repo's COMPLIANCE panel lists each deduction
+  (criticals flagged); the fleet compliance column shows the top reasons on
+  hover. The factor list IS the grade — they cannot disagree.
+- **Targeted rescan is full-fidelity**: excluding a god-file (or any VIBE.yaml
+  edit) re-probes just that repo — census, policy, docs, hygiene — and updates
+  all views in seconds; no more fleet sweep for a one-line edit.
+- Fleet table mirrors the sidebar's filesystem structure; stat tiles compacted
+  to fit one row; agent cards widened with model / effort / context-window
+  telemetry from the transcript; the live-agent pulse animates again (active
+  agents only, low-rate periodic timeline).
+
 ## [0.51.0] — 2026-07-09
 
 ### Added
