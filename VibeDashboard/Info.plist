@@ -31,7 +31,7 @@
     <key>SUFeedURL</key>
     <string>https://github.com/rex/vibe-dashboard/releases/latest/download/appcast.xml</string>
     <key>SUPublicEDKey</key>
-    <string>REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY</string>
+    <string>bJ2SRh3KHrwfSUb63+79Jdr5+/6RuJG5kmy5LllW4Y4=</string>
     <key>SUEnableAutomaticChecks</key>
     <true/>
     <key>NSHumanReadableCopyright</key>

@@ -3,6 +3,15 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.77.0] — 2026-07-10
+
+### Added
+- **Sparkle auto-updates activated** — generated the EdDSA signing keypair; the
+  public key is in Info.plist and the private key lives in the Keychain (backed
+  up separately). The in-app updater now runs in real builds (it stayed inert
+  while the key was a placeholder). Publishing the first appcast is the last
+  step — see [docs/RELEASE.md](docs/RELEASE.md).
+
 ## [0.76.0] — 2026-07-10
 
 ### Changed
