@@ -146,6 +146,30 @@ struct RcSecretTests {
     }
 }
 
+@Suite("git probe ownership")
+struct GitProbeOwnershipTests {
+    @Test("a VIBE'd subdir of a repo is NOT itself a git repo — no parent-state bleed")
+    func subdirDoesNotInheritParentGit() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vibe-own-" + UUID().uuidString)
+        let sub = root.appendingPathComponent("templates/greenfield")
+        try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        _ = await ProcessRunner.git(["init", "-q"], cwd: root.path)
+        _ = await ProcessRunner.git(["config", "user.email", "t@t"], cwd: root.path)
+        _ = await ProcessRunner.git(["config", "user.name", "t"], cwd: root.path)
+        try "x".write(to: root.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        _ = await ProcessRunner.git(["add", "."], cwd: root.path)
+        _ = await ProcessRunner.git(["commit", "-q", "--no-gpg-sign", "-m", "init"], cwd: root.path)
+
+        let parent = await GitProbe.probe(root.path, now: Date())
+        #expect(parent.isRepo)
+        // The subdir sits INSIDE the repo; git walks up — the probe must refuse to
+        // attribute the parent's branch/worktrees/dirty state to it.
+        let child = await GitProbe.probe(sub.path, now: Date())
+        #expect(!child.isRepo)
+    }
+}
+
 @Suite("agent refresh change gating")
 struct AgentChangeGateTests {
     private func info(_ id: String, at: Date, files: Int = 0) -> AgentInfo {

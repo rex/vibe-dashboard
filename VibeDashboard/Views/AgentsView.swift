@@ -285,7 +285,11 @@ private struct WorktreeSprawlPanel: View {
                 if sprawl.isEmpty {
                     EmptyState(icon: "git-branch", tone: .ok, text: "no extra worktrees across the fleet.")
                 } else {
-                    ForEach(Array(sprawl.enumerated()), id: \.element.worktree.id) { idx, item in
+                    // Positional identity: worktree paths are NOT unique across repos
+                    // when probing goes wrong (the phantom-repo bug duplicated them and
+                    // thrashed this list), and repo ids repeat per worktree. The rows
+                    // are stateless and fully re-derived per snapshot, so offset is safe.
+                    ForEach(Array(sprawl.enumerated()), id: \.offset) { idx, item in
                         SprawlRow(repo: item.repo, wt: item.worktree, last: idx == sprawl.count - 1)
                     }
                 }

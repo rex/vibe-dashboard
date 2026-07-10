@@ -18,6 +18,15 @@ enum GitProbe {
         var f = GitFacts()
         let inside = await ProcessRunner.git(["rev-parse", "--is-inside-work-tree"], cwd: abs)
         guard inside.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "true" else { return f }
+        // The repo must OWN the git it found. A candidate dir with a VIBE.yaml but
+        // no .git of its own (e.g. agentic-skeleton/templates/greenfield inside
+        // agent-skills) makes every git command walk UP to the enclosing repo —
+        // attributing the PARENT's branch/dirty state/worktrees to a phantom repo
+        // and duplicating its worktrees across the fleet (the ForEach id collision
+        // Pierce hit). Toplevel ≠ the probed path ⇒ honestly not a git repo itself.
+        let top = await line(["rev-parse", "--show-toplevel"], abs)
+        guard let top, (top as NSString).resolvingSymlinksInPath
+                == (abs as NSString).resolvingSymlinksInPath else { return f }
         f.isRepo = true
 
         f.branch = await line(["rev-parse", "--abbrev-ref", "HEAD"], abs) ?? "main"
