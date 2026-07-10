@@ -43,53 +43,32 @@ struct HealthDot: View {
     }
 }
 
-/// Live-agent equalizer — 3 bars, drawn in a Canvas on a slow periodic timeline.
+/// Live-agent equalizer — the `waveform` SF Symbol with an animated variable-color
+/// sweep. Its bars light in sequence to read as "an agent is working right now".
 ///
-/// THE RULE (learned three times over): this indicator must never touch the
-/// layout system while animating. Animating bar HEIGHT re-ran layout per frame;
-/// even an ANIMATED scaleEffect (GeometryEffect) dirtied its node at display
-/// rate and made every ancestor re-run sizeThatFits (sampled: 22k layout
-/// frames/5s across all views). A Canvas inside a FIXED frame swaps pure
-/// drawing on each 0.45s tick — zero layout, zero .animation, a few µs of fill.
+/// This is the FOURTH iteration, and finally the cheap one. The lineage (all
+/// sampled): animating bar HEIGHT re-ran layout every frame; an animated
+/// scaleEffect (a GeometryEffect) dirtied its node at display rate and forced
+/// every ancestor to re-run sizeThatFits (~22k layout frames/5s); a periodic
+/// Canvas fixed that but still committed a display update on the main thread each
+/// tick, ×N instances. A symbol effect is driven by Core Animation on the RENDER
+/// SERVER: the sweep runs on the GPU without waking the main thread, re-running
+/// SwiftUI `body`, or touching layout — and it idles completely when inactive.
+/// It also colours (`.foregroundStyle`) and scales (`.font`) natively.
 struct AgentPulse: View {
     var active: Bool = true
     var color: Color = Theme.color.warn
     var size: CGFloat = 13
 
-    private static let step: TimeInterval = 0.6
-    /// One shared phase for EVERY pulse instance: `.periodic(from: .now)` gives each
-    /// instance its own phase, so six pulses commit six separate display updates per
-    /// step (~13 commits/s) — and AppKit runs a window layout pass per commit. A
-    /// common epoch makes all pulses tick on the same beat: ~1.7 commits/s total.
-    private static let epoch = Date(timeIntervalSinceReferenceDate: 0)
-    private static let patterns: [[CGFloat]] = [
-        [0.50, 1.00, 0.68], [0.85, 0.55, 0.95], [0.60, 0.90, 0.45], [1.00, 0.65, 0.80],
-    ]
-    private var barsWidth: CGFloat { 3 * 2.5 + 2 * 2 }
-
     var body: some View {
-        Group {
-            if active {
-                TimelineView(.periodic(from: Self.epoch, by: Self.step)) { ctx in
-                    bars(tick: Int(ctx.date.timeIntervalSinceReferenceDate / Self.step))
-                }
-            } else {
-                bars(tick: 0).opacity(0.4)
-            }
-        }
-        .frame(width: barsWidth, height: size)   // layout size is CONSTANT, forever
-    }
-
-    private func bars(tick: Int) -> some View {
-        let pattern = Self.patterns[((tick % Self.patterns.count) + Self.patterns.count) % Self.patterns.count]
-        return Canvas { g, sz in
-            for i in 0..<3 {
-                let h = size * pattern[i]
-                let rect = CGRect(x: CGFloat(i) * 4.5, y: (sz.height - h) / 2,
-                                  width: 2.5, height: h)
-                g.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(color))
-            }
-        }
+        Image(systemName: "waveform")
+            .font(.system(size: size, weight: .semibold))
+            .foregroundStyle(color)
+            .symbolEffect(.variableColor.iterative.reversing,
+                          options: .repeating, isActive: active)
+            .opacity(active ? 1 : 0.4)          // inactive: a static, dimmed glyph
+            .frame(height: size)                // layout size is CONSTANT, forever
+            .accessibilityHidden(true)
     }
 }
 

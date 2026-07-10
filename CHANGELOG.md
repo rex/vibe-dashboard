@@ -3,6 +3,18 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.68.0] — 2026-07-10
+
+### Changed
+- **Live-agent pulse is now the `waveform` SF Symbol** with an animated
+  variable-color sweep, replacing the hand-rolled Canvas equalizer. Symbol
+  effects render via Core Animation on the GPU: the bars sweep without waking
+  the main thread, re-running SwiftUI `body`, or touching layout, and idle
+  completely when no agent is active — the cheapest of the four pulse
+  iterations to date. It colours (`.foregroundStyle`) and scales (`.font`)
+  natively, so every call site (sidebar, fleet, inspector, watch window, status
+  bar, menu bar) keeps the exact same `active`/`color`/`size` API.
+
 ## [0.66.0] — 2026-07-10
 
 ### Fixed
