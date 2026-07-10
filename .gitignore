@@ -37,6 +37,7 @@ owner-scope.json          # local fleet owner-scoping (see Shared/Scan/OwnerScop
 # --- Internal dev journals — kept locally, not part of the public repo ---
 TASK_STATE.md
 BACKLOG.md
+REMEDIATION_PLAN.md
 
 # --- CocoaPods / Carthage — FORBIDDEN; belt-and-suspenders. ---
 Podfile

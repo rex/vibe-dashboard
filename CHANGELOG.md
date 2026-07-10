@@ -3,6 +3,20 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.78.0] — 2026-07-10
+
+### Fixed
+- **`make` and Xcode no longer fight over SwiftPM state.** CLI builds keep
+  their package clones and binary artifacts in `build/spm`
+  (`-clonedSourcePackagesDirPath`), isolated from Xcode's — the shared-cache
+  collision that produced "Missing package product 'Sparkle'" after a
+  command-line build can no longer occur.
+
+### Changed
+- Final pre-publish sweep: genericized the last internal hostname/path
+  references in the design docs; `REMEDIATION_PLAN.md` joins the gitignored
+  local dev journals.
+
 ## [0.77.0] — 2026-07-10
 
 ### Added

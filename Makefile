@@ -25,6 +25,11 @@ MARKETING_VERSION := $(shell ./Scripts/generate-build-info.sh --print-marketing 
 PKG_RESOLVED     := Package.resolved
 PKG_RESOLVED_DST := $(PROJECT)/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
+# CLI SwiftPM state lives inside the repo (build/spm), ISOLATED from Xcode's —
+# sharing ~/Library/Caches/org.swift.swiftpm lets a make build poison the GUI
+# build ("Missing package product 'Sparkle'" / artifact "already exists").
+SPM_CLONES := build/spm
+
 # Architecture gate thresholds (mirror VIBE.yaml).
 HARD_LINES ?= 400
 SOFT_LINES ?= 250
@@ -74,7 +79,8 @@ regenerate:
 
 .PHONY: resolve
 resolve: regenerate
-	$(XCODEBUILD) -project $(PROJECT) -scheme $(SCHEME_MAC) -resolvePackageDependencies
+	$(XCODEBUILD) -project $(PROJECT) -scheme $(SCHEME_MAC) -resolvePackageDependencies \
+		-clonedSourcePackagesDirPath $(SPM_CLONES)
 	@if [ -f "$(PKG_RESOLVED_DST)" ]; then \
 		cp "$(PKG_RESOLVED_DST)" "$(PKG_RESOLVED)"; \
 		echo ">>> updated $(PKG_RESOLVED) from resolution — commit it to pin"; \
@@ -83,6 +89,7 @@ resolve: regenerate
 .PHONY: build-mac
 build-mac: regenerate
 	$(XCODEBUILD) -project $(PROJECT) -scheme $(SCHEME_MAC) -destination $(DEST_MAC) \
+		-clonedSourcePackagesDirPath $(SPM_CLONES) \
 		CODE_SIGNING_ALLOWED=NO \
 		CURRENT_PROJECT_VERSION=$(BUILD_NUM) \
 		MARKETING_VERSION=$(MARKETING_VERSION) build
@@ -90,6 +97,7 @@ build-mac: regenerate
 .PHONY: run
 run: build-mac
 	@APP="$$($(XCODEBUILD) -project $(PROJECT) -scheme $(SCHEME_MAC) -destination $(DEST_MAC) \
+		-clonedSourcePackagesDirPath $(SPM_CLONES) \
 		MARKETING_VERSION=$(MARKETING_VERSION) \
 		-showBuildSettings 2>/dev/null | awk '/ BUILT_PRODUCTS_DIR/ {d=$$3} / FULL_PRODUCT_NAME/ {n=$$3} END {print d"/"n}')"; \
 	echo ">>> launching $$APP"; open "$$APP"
@@ -98,6 +106,7 @@ run: build-mac
 test: regenerate
 	rm -rf build/test-results.xcresult   # xcodebuild refuses to overwrite an existing result bundle
 	$(XCODEBUILD) test -project $(PROJECT) -scheme $(SCHEME_MAC) -destination $(DEST_MAC) \
+		-clonedSourcePackagesDirPath $(SPM_CLONES) \
 		CODE_SIGNING_ALLOWED=NO \
 		-resultBundlePath build/test-results.xcresult \
 		CURRENT_PROJECT_VERSION=$(BUILD_NUM) \
