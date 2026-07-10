@@ -59,18 +59,24 @@ struct StatusBarView: View {
     private var dot: some View { Text("·").foregroundStyle(Theme.color.textFaint) }
 }
 
+/// Scan-progress sweep, drawn in a Canvas at ~15fps inside a FIXED frame — the
+/// old repeatForever offset animation was an animated GeometryEffect running at
+/// display rate for the entire scan. Pure drawing; the layout system never hears
+/// about it.
 private struct ScanBar: View {
-    @State private var x: CGFloat = -1
     var body: some View {
-        GeometryReader { geo in
-            Capsule().fill(Theme.color.accent)
-                .frame(width: geo.size.width * 0.3)
-                .shadow(color: ColorPalette.lime400.opacity(0.3), radius: 4)
-                .offset(x: x * geo.size.width)
+        TimelineView(.periodic(from: .now, by: 1.0 / 15.0)) { ctx in
+            Canvas { g, sz in
+                let phase = CGFloat(ctx.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9)) / 0.9
+                let w = sz.width * 0.3
+                let x = (sz.width + w) * phase - w
+                g.fill(Path(roundedRect: CGRect(x: x, y: 0, width: w, height: sz.height),
+                            cornerRadius: sz.height / 2),
+                       with: .color(Theme.color.accent))
+            }
         }
         .frame(width: 64, height: 3)
         .background(Theme.color.surfaceActive)
         .clipShape(Capsule())
-        .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: false)) { x = 1.1 } }
     }
 }

@@ -114,9 +114,21 @@ struct ToolbarView: View {
     private var rescanButton: some View {
         Button { Task { await store.rescan() } } label: {
             HStack(spacing: 7) {
-                VibeIcon("refresh-cw", size: 14, color: Theme.color.accent)
-                    .rotationEffect(.degrees(store.isScanning ? 360 : 0))
-                    .animation(store.isScanning ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: store.isScanning)
+                // Discrete 12-step rotation on a periodic timeline — NEVER a
+                // repeatForever/animated GeometryEffect (those re-render at display
+                // rate and make ancestor chrome re-layout per frame, all scan long).
+                Group {
+                    if store.isScanning {
+                        TimelineView(.periodic(from: .now, by: 0.1)) { ctx in
+                            VibeIcon("refresh-cw", size: 14, color: Theme.color.accent)
+                                .rotationEffect(.degrees(
+                                    Double(Int(ctx.date.timeIntervalSinceReferenceDate * 10) % 12) * 30))
+                        }
+                    } else {
+                        VibeIcon("refresh-cw", size: 14, color: Theme.color.accent)
+                    }
+                }
+                .frame(width: 14, height: 14)
                 Text("Re-scan").font(VibeFont.mono(VibeFont.size.sm, .medium)).foregroundStyle(Theme.color.textPrimary)
             }
             .padding(.horizontal, 12)

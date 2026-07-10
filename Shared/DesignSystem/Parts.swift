@@ -43,12 +43,14 @@ struct HealthDot: View {
     }
 }
 
-/// Live-agent equalizer — 3 bars. ACTIVE instances animate on a slow periodic
-/// timeline (~2 Hz height steps, eased) — cheap because only the handful of
-/// truly-live pulses tick, and a periodic timeline re-evaluates just this tiny
-/// subtree. This is NOT the banned pattern: no repeatForever, no
-/// TimelineView(.animation) 120fps re-render across every row (that pegged the
-/// main thread at 45% idle and is why the pulse froze). Inactive = static + dim.
+/// Live-agent equalizer — 3 bars, drawn in a Canvas on a slow periodic timeline.
+///
+/// THE RULE (learned three times over): this indicator must never touch the
+/// layout system while animating. Animating bar HEIGHT re-ran layout per frame;
+/// even an ANIMATED scaleEffect (GeometryEffect) dirtied its node at display
+/// rate and made every ancestor re-run sizeThatFits (sampled: 22k layout
+/// frames/5s across all views). A Canvas inside a FIXED frame swaps pure
+/// drawing on each 0.45s tick — zero layout, zero .animation, a few µs of fill.
 struct AgentPulse: View {
     var active: Bool = true
     var color: Color = Theme.color.warn
@@ -58,33 +60,31 @@ struct AgentPulse: View {
     private static let patterns: [[CGFloat]] = [
         [0.50, 1.00, 0.68], [0.85, 0.55, 0.95], [0.60, 0.90, 0.45], [1.00, 0.65, 0.80],
     ]
+    private var barsWidth: CGFloat { 3 * 2.5 + 2 * 2 }
 
     var body: some View {
-        if active {
-            TimelineView(.periodic(from: .now, by: Self.step)) { ctx in
-                bars(tick: Int(ctx.date.timeIntervalSinceReferenceDate / Self.step))
+        Group {
+            if active {
+                TimelineView(.periodic(from: .now, by: Self.step)) { ctx in
+                    bars(tick: Int(ctx.date.timeIntervalSinceReferenceDate / Self.step))
+                }
+            } else {
+                bars(tick: 0).opacity(0.4)
             }
-        } else {
-            bars(tick: 0).opacity(0.4)
         }
+        .frame(width: barsWidth, height: size)   // layout size is CONSTANT, forever
     }
 
     private func bars(tick: Int) -> some View {
         let pattern = Self.patterns[((tick % Self.patterns.count) + Self.patterns.count) % Self.patterns.count]
-        return HStack(alignment: .center, spacing: 2) {
-            ForEach(0..<3, id: \.self) { i in
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(color)
-                    // FIXED frame + scaleEffect: the bar's visual height animates as a
-                    // pure render-layer transform. Animating `height:` instead re-runs
-                    // MAIN-THREAD LAYOUT every frame of every ease (~120fps × instances
-                    // — sampled at 22k layout frames/5s). Never animate layout here.
-                    .frame(width: 2.5, height: size)
-                    .scaleEffect(x: 1, y: pattern[i], anchor: .center)
+        return Canvas { g, sz in
+            for i in 0..<3 {
+                let h = size * pattern[i]
+                let rect = CGRect(x: CGFloat(i) * 4.5, y: (sz.height - h) / 2,
+                                  width: 2.5, height: h)
+                g.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(color))
             }
         }
-        .frame(height: size)
-        .animation(Theme.motion.easeOutBase, value: tick)
     }
 }
 
