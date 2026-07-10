@@ -117,7 +117,7 @@ All overlays are dispatched by one component, `Overlays.Sheets({ sheet, repo, da
 - Padding **`13px 16px`** (top/bottom 13, left/right 16).
 - `borderBottom` 1pt `--border` (#202A2E); background `--surface-2` (#171D20).
 - Leading: `Icon name={icon} size=16`, color `--accent` (#B4FF34).
-- Title: `flex:1`, JetBrains **Mono**, `--text-md` (16px), weight **700**, color `--text-bright` (#F1F6F3). (Title strings are per-sheet, e.g. `"Reconcile · magpie-macos"`.)
+- Title: `flex:1`, JetBrains **Mono**, `--text-md` (16px), weight **700**, color `--text-bright` (#F1F6F3). (Title strings are per-sheet, e.g. `"Reconcile · example-app"`.)
 - Trailing **close button:** 26×26pt, centered, no border, transparent bg, cursor pointer, color `--text-muted` (#6B7773), `borderRadius --radius-xs` (2pt). Contains `Icon name="x" size=15`. Fires `onClose`.
 
 **Body:** `flex:1; overflowY:auto; padding:16; minHeight:0` → scrollable content region, 16pt padding all sides. SwiftUI `ScrollView { … }.padding(16)`.
@@ -211,7 +211,7 @@ Track 38×22pt, `borderRadius --radius-full`, bg `--surface-active` (#232B30), b
 - `repo.worktree.signed` (bool) → if `false`, shows a `commits unsigned` danger pill in the branch row.
 - `repo.agent.branch` (string) → the branch to commit on; falls back to `'main'` when no agent/branch.
 
-**Placeholder staged files** (by stack, demo — replace with real): swift → `['Magpie/DownloadManager.swift','Magpie/Views/LibraryView.swift','Magpie/Models/Download.swift']`; react → `['src/entrypoints/popup/App.tsx','src/lib/grab.ts','src/components/Settings.tsx']`; else (python/other) → `['src/server.py','src/routes/billing.py','src/services/sync.py','tests/test_billing.py']`. Sliced to `max(1, unstaged)`.
+**Placeholder staged files** (by stack, demo — replace with real): swift → `['App/DownloadManager.swift','App/Views/LibraryView.swift','App/Models/Download.swift']`; react → `['src/entrypoints/popup/App.tsx','src/lib/grab.ts','src/components/Settings.tsx']`; else (python/other) → `['src/server.py','src/routes/billing.py','src/services/sync.py','tests/test_billing.py']`. Sliced to `max(1, unstaged)`.
 
 **Body layout (VStack):**
 1. **Branch row** (`HStack`, gap 10, mono `--text-sm`, color `--text-secondary`, margin-bottom 12): `Icon name="git-branch" size=14` (muted) + `on ` + **`{branch}`** (bold, `--text-primary`) + (if `!worktree.signed`) `Pill tone="danger"` reading `commits unsigned`.

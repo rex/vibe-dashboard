@@ -43,7 +43,7 @@ struct HonestyTests {
          ("Go to Fleet", nil),
          ("Go to Agents", nil),
          ("vibe-dashboard", "~/Code/apps/vibe-dashboard"),
-         ("bump-tracker", "~/dev/bump-tracker")]
+         ("example-svc", "~/dev/example-svc")]
     }
 
     @Test("empty query returns everything, capped, with the remainder counted")

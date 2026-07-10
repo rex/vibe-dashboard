@@ -11,45 +11,50 @@ import Foundation
 struct RemoteIdentityTests {
     @Test("scp, ssh, and https forms of the same repo resolve to ONE owner")
     func ownerAcrossForms() {
-        // The exact regression from the backlog: three spellings of `rex/x`, one owner.
-        let scp = GitProbe.remoteIdentity("git@github.com:rex/x.git")
-        let ssh = GitProbe.remoteIdentity("ssh://git@github.com/rex/x")
-        let https = GitProbe.remoteIdentity("https://github.com/rex/x.git")
-        #expect(scp?.owner == "rex")
-        #expect(ssh?.owner == "rex")
-        #expect(https?.owner == "rex")
+        // The exact regression from the backlog: three spellings of `acme/x`, one owner.
+        let scp = GitProbe.remoteIdentity("git@github.com:acme/x.git")
+        let ssh = GitProbe.remoteIdentity("ssh://git@github.com/acme/x")
+        let https = GitProbe.remoteIdentity("https://github.com/acme/x.git")
+        #expect(scp?.owner == "acme")
+        #expect(ssh?.owner == "acme")
+        #expect(https?.owner == "acme")
         #expect(scp?.host == "github.com")
         #expect(ssh?.host == "github.com")
         #expect(https?.host == "github.com")
     }
 
-    @Test("ownership is form-agnostic across every owned owner")
+    // A representative OwnerScope for the ownership tests (self-hosted host + orgs).
+    private let scope = OwnerScope(hosts: ["gitea", "git.example.com"],
+                                   githubOwners: ["acme", "acme-labs", "widgets"])
+
+    @Test("ownership is form-agnostic across every configured owner")
     func ownedFormAgnostic() {
-        #expect(GitProbe.isOwnedRemoteURL("git@github.com:rex/x.git"))
-        #expect(GitProbe.isOwnedRemoteURL("ssh://git@github.com/rex/x"))
-        #expect(GitProbe.isOwnedRemoteURL("https://github.com/rex/x.git"))
-        #expect(GitProbe.isOwnedRemoteURL("git@github.com:eye/thing"))
-        #expect(GitProbe.isOwnedRemoteURL("https://github.com/widgets/svc.git"))
+        #expect(GitProbe.isOwnedRemoteURL("git@github.com:acme/x.git", scope: scope))
+        #expect(GitProbe.isOwnedRemoteURL("ssh://git@github.com/acme/x", scope: scope))
+        #expect(GitProbe.isOwnedRemoteURL("https://github.com/acme/x.git", scope: scope))
+        #expect(GitProbe.isOwnedRemoteURL("git@github.com:acme-labs/thing", scope: scope))
+        #expect(GitProbe.isOwnedRemoteURL("https://github.com/widgets/svc.git", scope: scope))
     }
 
-    @Test("a self-hosted gitea remote is owned in any form")
-    func giteaOwned() {
-        #expect(GitProbe.isOwnedRemoteURL("git@git.example.com:dev/infra.git"))
-        #expect(GitProbe.isOwnedRemoteURL("https://git.example.com/dev/infra"))
+    @Test("a self-hosted remote is owned in any form")
+    func selfHostedOwned() {
+        #expect(GitProbe.isOwnedRemoteURL("git@git.example.com:me/infra.git", scope: scope))
+        #expect(GitProbe.isOwnedRemoteURL("https://git.example.com/me/infra", scope: scope))
     }
 
-    @Test("a foreign owner is NOT owned, and a near-miss prefix does not false-match")
+    @Test("a foreign owner is NOT owned, and a near-miss does not false-match")
     func foreignRejected() {
-        #expect(!GitProbe.isOwnedRemoteURL("https://github.com/facebook/react.git"))
-        #expect(!GitProbe.isOwnedRemoteURL("git@github.com:rexany/x.git"))   // 'rexany' ≠ 'rex'
-        #expect(!GitProbe.isOwnedRemoteURL("https://gitlab.com/rex/x.git"))  // right owner, wrong host
-        #expect(!GitProbe.isOwnedRemoteURL(""))
+        #expect(!GitProbe.isOwnedRemoteURL("https://github.com/facebook/react.git", scope: scope))
+        #expect(!GitProbe.isOwnedRemoteURL("git@github.com:acmeandco/x.git", scope: scope))  // 'acmeandco' ≠ 'acme'
+        #expect(!GitProbe.isOwnedRemoteURL("https://gitlab.com/acme/x.git", scope: scope))   // right owner, wrong host
+        #expect(!GitProbe.isOwnedRemoteURL("", scope: scope))
+        #expect(!GitProbe.isOwnedRemoteURL("git@github.com:acme/x.git"))   // empty default scope → not owned
     }
 
     @Test("an ssh URL with an explicit port still recovers the owner")
     func sshWithPort() {
-        #expect(GitProbe.remoteIdentity("ssh://git@github.com:22/rex/x.git")?.owner == "rex")
-        #expect(GitProbe.remoteIdentity("ssh://git@github.com:22/rex/x.git")?.host == "github.com")
+        #expect(GitProbe.remoteIdentity("ssh://git@github.com:22/acme/x.git")?.owner == "acme")
+        #expect(GitProbe.remoteIdentity("ssh://git@github.com:22/acme/x.git")?.host == "github.com")
     }
 }
 
@@ -69,8 +74,8 @@ struct OwnershipDefaultTests {
 
     @Test("an owned remote wins regardless of the managed flag or the URL form")
     func ownedRemoteWins() {
-        let scp = [Remote(name: "origin", host: "github", url: "git@github.com:rex/x.git")]
-        #expect(FleetScanner.isOwnedRepo(remotes: scp, managed: false))
+        let scp = [Remote(name: "origin", host: "github", url: "git@github.com:acme/x.git")]
+        #expect(FleetScanner.isOwnedRepo(remotes: scp, managed: false, scope: OwnerScope(githubOwners: ["acme"])))
     }
 }
 
@@ -78,22 +83,23 @@ struct OwnershipDefaultTests {
 struct DisplayURLTests {
     @Test("when fetch is foreign but push is owned, the OWNED push URL surfaces")
     func ownedPushSurfaces() {
+        let scope = OwnerScope(githubOwners: ["acme"])
         let picked = GitProbe.displayURL(fetch: "https://github.com/facebook/react.git",
-                                         push: "git@github.com:rex/react.git")
-        #expect(picked == "git@github.com:rex/react.git")
-        #expect(GitProbe.isOwnedRemoteURL(picked))
+                                         push: "git@github.com:acme/react.git", scope: scope)
+        #expect(picked == "git@github.com:acme/react.git")
+        #expect(GitProbe.isOwnedRemoteURL(picked, scope: scope))
     }
 
     @Test("identical fetch/push keeps the fetch URL")
     func identicalKeepsFetch() {
-        #expect(GitProbe.displayURL(fetch: "https://github.com/rex/x.git",
-                                    push: "https://github.com/rex/x.git") == "https://github.com/rex/x.git")
+        #expect(GitProbe.displayURL(fetch: "https://github.com/acme/x.git",
+                                    push: "https://github.com/acme/x.git") == "https://github.com/acme/x.git")
     }
 
     @Test("a fetch-only remote uses its fetch URL; a push-only remote uses push")
     func singleSided() {
-        #expect(GitProbe.displayURL(fetch: "https://github.com/rex/x.git", push: nil) == "https://github.com/rex/x.git")
-        #expect(GitProbe.displayURL(fetch: nil, push: "git@github.com:rex/x.git") == "git@github.com:rex/x.git")
+        #expect(GitProbe.displayURL(fetch: "https://github.com/acme/x.git", push: nil) == "https://github.com/acme/x.git")
+        #expect(GitProbe.displayURL(fetch: nil, push: "git@github.com:acme/x.git") == "git@github.com:acme/x.git")
         #expect(GitProbe.displayURL(fetch: nil, push: nil).isEmpty)
     }
 }

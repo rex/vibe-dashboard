@@ -140,7 +140,7 @@ struct EvidenceTests {
                    "agentic-workspace", "scaffold", "retrofit", "sync-skills"] {
             #expect(TranscriptProbe.isProvenanceSkill(id), "expected \(id) to be provenance")
         }
-        for id in ["anchor", "serena", "plan", "prompt-builder", "homelab-infra", "money", ""] {
+        for id in ["anchor", "serena", "plan", "prompt-builder", "side-project", "budget", ""] {
             #expect(!TranscriptProbe.isProvenanceSkill(id), "expected \(id) to be excluded")
         }
     }

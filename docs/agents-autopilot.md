@@ -318,7 +318,7 @@ on `--surface-raised`) — give a subtle press feedback only. All icons `.access
   - **Branch line:** JetBrains Mono, `--text-sm` (12.5), color `--text-primary` (#E5ECE8),
     `whiteSpace:nowrap; overflow:hidden; textOverflow:ellipsis` (single-line, truncating). Text = `w.branch`.
   - **Meta button** → **`actions.openRepo(w.repoId)`**: JetBrains Mono, `--text-2xs` (10), color `--text-muted`, transparent.
-    Text = `"{w.repo} · {w.created} · {w.commits} commits"` (e.g. `"magpie-macos · 12d ago · 0 commits"`).
+    Text = `"{w.repo} · {w.created} · {w.commits} commits"` (e.g. `"example-app · 12d ago · 0 commits"`).
 - **State badge:** `StatusBadge(size:"sm")` with `status` derived from `WT_TONE[w.state]`
   (ok→ok / warn→warn / else→danger) and label = `w.state` (`active`/`stale`/`abandoned`), lowercase.
 - **Trailing prune control (conditional):**
@@ -442,7 +442,7 @@ disarming any rule → **info** toast. Update local `armed` state immediately (o
 |---|---|---|---|---|---|---|
 | `rescan` | re-check on save | false | **true** | all repos | dev-mac · 11s ago | 2140 |
 | `format` | format on save | false | **true** | 8 repos | demo-server · 2m ago | 318 |
-| `task-state-alarm` | alarm on TASK_STATE bloat | false | **true** | all repos | magpie-macos · 9m ago | 4 |
+| `task-state-alarm` | alarm on TASK_STATE bloat | false | **true** | all repos | example-app · 9m ago | 4 |
 | `prune-worktrees` | prune abandoned worktrees | **true** | false | all repos | never | 0 |
 | `auto-push` | sign + push clean commits | **true** | false | 3 repos | never | 0 |
 | `skeleton-bump` | bump skeleton (minor) | **true** | false | all repos | never | 0 |
@@ -487,7 +487,7 @@ A single armable rule row inside the flush rules `Card`. This is the core Autopi
   `--text-sm` (12.5), color `--text-secondary`, `lineHeight 1.5`, `textWrap:pretty` (balanced wrapping).
 - **Meta row (`HStack, alignItems:center, gap 12pt`):** JetBrains Mono, `--text-2xs` (10), color `--text-faint` (#4C5754):
   - `HStack gap 5pt`: `Icon(name:"target", size:11)` + `Text(rule.scope)` (e.g. "all repos").
-  - `HStack gap 5pt`: `Icon(name:"history", size:11)` + `Text("last {rule.lastRan}")` (e.g. "last never" / "last magpie-macos · 9m ago").
+  - `HStack gap 5pt`: `Icon(name:"history", size:11)` + `Text("last {rule.lastRan}")` (e.g. "last never" / "last example-app · 9m ago").
   - **Conditional** (only if `rule.runs > 0`): `Text("{rule.runs.toLocaleString()} runs")` (e.g. "2,140 runs").
 
 **Trailing toggle (`flex:none`, `paddingTop 4pt`):** the DS `Switch` (§3),
@@ -519,7 +519,7 @@ The title-row pills use a wrapping HStack (`flexWrap:wrap`) so they flow to a se
 
 **Data paths / model:** `data.activity[i] = { t:string, kind:string, repo:string, msg:string, tone:'ok'|'warn'|'danger'|'info', repoId?:string }`.
 Autopilot-kind seed entries: `{t:'1m', repo:'demo-server', msg:'format on save · ruff --fix · 2 files', tone:'ok'}` and
-`{t:'9m', repo:'magpie-macos', msg:'TASK_STATE.md crossed 1,800 lines → notified', tone:'warn'}`.
+`{t:'9m', repo:'example-app', msg:'TASK_STATE.md crossed 1,800 lines → notified', tone:'warn'}`.
 
 **SwiftUI:** flush `Card`; `ForEach(autoLog)` of an `HStack(spacing:12){ Text(t).frame(width:34,alignment:.trailing); Image; Button(repo).frame(width:130,alignment:.leading); Text(msg).frame(maxWidth:.infinity,alignment:.leading) }` with a bottom hairline except last.
 

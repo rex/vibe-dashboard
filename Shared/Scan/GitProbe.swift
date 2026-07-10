@@ -123,8 +123,9 @@ enum GitProbe {
     /// Which URL represents a remote: the fetch URL by default, but the push URL when
     /// fetch is NOT owned and push IS (a `set-url --push` owned mirror) so the owner
     /// filter and UI both reflect the owned host. Pure + testable.
-    static func displayURL(fetch: String?, push: String?) -> String {
-        if let f = fetch, let p = push, f != p, !isOwnedRemoteURL(f), isOwnedRemoteURL(p) { return p }
+    static func displayURL(fetch: String?, push: String?, scope: OwnerScope = .current) -> String {
+        if let f = fetch, let p = push, f != p,
+           !isOwnedRemoteURL(f, scope: scope), isOwnedRemoteURL(p, scope: scope) { return p }
         return fetch ?? push ?? ""
     }
 
@@ -143,8 +144,8 @@ enum GitProbe {
     }
 
     /// (host, owner) parsed from a git remote URL in scp, ssh://, https://, or git://
-    /// form — pure + testable. All of these yield host "github.com", owner "rex":
-    ///   `git@github.com:rex/x.git`  ·  `ssh://git@github.com/rex/x`  ·  `https://github.com/rex/x.git`
+    /// form — pure + testable. All of these yield host "github.com", owner "acme":
+    ///   `git@github.com:acme/x.git`  ·  `ssh://git@github.com/acme/x`  ·  `https://github.com/acme/x.git`
     /// Returns nil when no host can be recovered.
     static func remoteIdentity(_ url: String) -> (host: String, owner: String)? {
         var s = url.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -163,13 +164,14 @@ enum GitProbe {
         return (host.lowercased(), cleanOwner.lowercased())
     }
 
-    /// Whether a remote URL points at a host/owner Pierce owns — self-hosted gitea
-    /// (`git.example.com`, any repo) or github under `acme` / `acme-labs` / `widgets`.
-    /// Form-agnostic (scp ≡ ssh ≡ https). Pure + testable.
-    static func isOwnedRemoteURL(_ url: String) -> Bool {
+    /// Whether a remote URL points at a host/owner in the configured `OwnerScope`
+    /// — your own git hosts and/or GitHub orgs (see `OwnerScope`). Form-agnostic
+    /// (scp ≡ ssh ≡ https). Pure + testable. With an empty scope (the default),
+    /// nothing matches — the fleet keeps managed repos by default instead.
+    static func isOwnedRemoteURL(_ url: String, scope: OwnerScope = .current) -> Bool {
         guard let id = remoteIdentity(url) else { return false }
-        if id.host.contains("example.com") || id.host.contains("gitea") { return true }
-        if id.host.contains("github.com") { return ["acme", "acme-labs", "widgets"].contains(id.owner) }
+        if scope.hosts.contains(where: { id.host.contains($0) }) { return true }
+        if id.host.contains("github.com") { return scope.githubOwners.contains(id.owner) }
         return false
     }
 

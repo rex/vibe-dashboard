@@ -3,6 +3,19 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.76.0] — 2026-07-10
+
+### Changed
+- **Prepared for open-source release (MIT).** Rewrote the public README, added a
+  LICENSE, and swept the repo for secrets/PII — gitleaks (full 75-commit history)
+  plus a manual scan found no credentials. Extracted fleet owner-scoping (git
+  hosts / GitHub orgs) out of the source into a git-ignored `OwnerScope` config
+  (`Shared/Scan/OwnerScope.swift`; empty by default — managed repos are
+  owned-by-default, so behaviour is unchanged), and genericized personal paths,
+  team IDs, and project names across tests and docs. `TASK_STATE.md` and
+  `BACKLOG.md` are now git-ignored (kept locally). The Sparkle appcast is served
+  from this repo's own GitHub Releases.
+
 ## [0.74.0] — 2026-07-10
 
 ### Added
@@ -10,10 +23,9 @@ follows Keep a Changelog; versions are semver from `VERSION`.
   appcast on a schedule, and shows release notes + an Install button when a newer
   notarized build appears (auto-check + prompt), plus a "Check for Updates…"
   item under the app menu. Updates are gated by an EdDSA signature over the
-  archive AND the app's Developer ID / notarization. The feed + downloads will
-  live in a dedicated PUBLIC `vibe-dashboard-releases` repo (source stays
-  private — GitHub only serves release assets publicly for public repos), with
-  `SUFeedURL` pointing at its `releases/latest/download/appcast.xml`.
+  archive AND the app's Developer ID / notarization. The feed + downloads are
+  served from this repo's GitHub Releases, with `SUFeedURL` pointing at
+  `releases/latest/download/appcast.xml`.
   - The updater starts only in a real shipped app: never under the unit-test
     host (a live updater there hangs the runner) and not until `SUPublicEDKey`
     is a real key (the repo ships a clearly-marked placeholder). The menu item

@@ -32,6 +32,11 @@ AuthKey_*.p8
 .env.*
 Environment.plist
 *.local.swift
+owner-scope.json          # local fleet owner-scoping (see Shared/Scan/OwnerScope.swift)
+
+# --- Internal dev journals — kept locally, not part of the public repo ---
+TASK_STATE.md
+BACKLOG.md
 
 # --- CocoaPods / Carthage — FORBIDDEN; belt-and-suspenders. ---
 Podfile

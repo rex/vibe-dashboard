@@ -53,8 +53,9 @@ struct FleetScanner: Sendable {
         var childrenOf: [String: [String]] = [:]
         for r in repos { if let p = r.parentId { childrenOf[p, default: []].append(r.id) } }
 
-        // Owner filter: keep only repos whose origin I own (github acme/acme-labs/widgets
-        // or gitea git.example.com), plus the workspace ancestors of owned repos.
+        // Owner filter (optional; off by default — see OwnerScope): keep only repos
+        // whose origin matches your configured git hosts / GitHub orgs, plus the
+        // workspace ancestors of owned repos. An empty scope keeps every managed repo.
         var owned = Set(repos.filter { isOwned($0) }.map { $0.id })
         var grew = true
         while grew {
@@ -220,17 +221,17 @@ struct FleetScanner: Sendable {
     private func isManagedMarker(_ abs: String) -> Bool {
         ["/VIBE.yaml", "/AGENTS.md", "/.claude", "/WORKSPACE.yaml"].contains { FleetScanner.fm.fileExists(atPath: abs + $0) }
     }
-    /// Whether a repo belongs to me. An owned remote (github acme/acme-labs/widgets or
-    /// gitea git.example.com, in ANY url form — scp, ssh, https) wins outright. A
-    /// MANAGED repo with no recognizably-owned remote is OWNED BY DEFAULT: it already
-    /// passed the VIBE.yaml/marker filter, so it's a repo Pierce configured locally, and
-    /// dropping it — an scp/ssh remote the old literal-substring match missed, or no
-    /// remote at all — made his OWN repo invisible to the tool meant to oversee it.
+    /// Whether a repo counts as "mine". A remote matching the configured `OwnerScope`
+    /// (in ANY url form — scp, ssh, https) wins outright. A MANAGED repo with no
+    /// matching remote is OWNED BY DEFAULT: it already passed the VIBE.yaml/marker
+    /// filter, so it's a repo configured locally, and dropping it — an scp/ssh remote a
+    /// literal-substring match would miss, or no remote at all — would make your own
+    /// repo invisible to the tool meant to oversee it.
     private func isOwned(_ r: Repo) -> Bool { Self.isOwnedRepo(remotes: r.scm.remotes, managed: r.managed) }
 
     /// Pure ownership decision — testable without constructing a full `Repo`.
-    static func isOwnedRepo(remotes: [Remote], managed: Bool) -> Bool {
-        for rem in remotes where GitProbe.isOwnedRemoteURL(rem.url) { return true }
+    static func isOwnedRepo(remotes: [Remote], managed: Bool, scope: OwnerScope = .current) -> Bool {
+        for rem in remotes where GitProbe.isOwnedRemoteURL(rem.url, scope: scope) { return true }
         return managed
     }
     private func isDir(_ path: String) -> Bool {

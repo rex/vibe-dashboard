@@ -125,31 +125,28 @@ Updates are gated twice — an EdDSA signature over the archive AND the Develope
 ID / notarization — so a compromised feed still can't push a build macOS or
 Sparkle will run.
 
-This repo is **private**, and GitHub only serves release assets publicly for
-public repos, so the feed + downloads live in a **dedicated public repo**,
-`rex/vibe-dashboard-releases` (source stays private; only the DMGs + appcast.xml
-are public). `SUFeedURL` points at its `releases/latest/download/appcast.xml`.
+The appcast + DMGs are served from this repo's **GitHub Releases** (public repo,
+so the assets are publicly downloadable). `SUFeedURL` points at
+`releases/latest/download/appcast.xml`.
 
 ### One-time setup
 
-1. **Create the public releases repo** (yours — I can't create public content):
-   `gh repo create rex/vibe-dashboard-releases --public -d "Vibe Dashboard update feed"`.
-2. **Generate the Sparkle EdDSA keypair** (separate from Apple's keys) with
+1. **Generate the Sparkle EdDSA keypair** (separate from Apple's keys) with
    Sparkle's `generate_keys`. It stores the PRIVATE key in your login Keychain
    and prints the PUBLIC key. Then:
    - paste the public key into `VibeDashboard/Info.plist` → `SUPublicEDKey`
      (replacing `REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY`); and
-   - export + back up the private key to 1Password (`generate_keys -x`) — lose
-     it and you can never ship an update existing installs will accept.
+   - export + back up the private key (`generate_keys -x`) to your password
+     manager — lose it and you can never ship an update existing installs accept.
 
 ### Per release
 
 After `make release` produces the notarized DMG, the feed is published:
 `generate_appcast` signs each archive with the Keychain EdDSA key and writes
 `appcast.xml`, then the DMG + `appcast.xml` upload as assets on a GitHub Release
-in the public repo. This becomes a `make publish` step wired to the releases
-repo once the repo + keys exist (deferred until then so it's built and tested
-against real values, not placeholders).
+of this repo. This becomes a `make publish` step once the Sparkle keys exist
+(deferred until then so it's built and tested against real values, not
+placeholders).
 
 ## Notes
 

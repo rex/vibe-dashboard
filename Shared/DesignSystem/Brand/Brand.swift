@@ -27,12 +27,10 @@ enum Brand {
         lang[stack] ?? Lang(code: String(stack.prefix(2)), label: stack, color: Color(hex: 0x7E8A86), icon: "file-code-2")
     }
 
-    static let emblems: [String: String] = [
-        "rancher-mcp": "ship-wheel", "demo-server": "server", "pennywise-webapp": "receipt",
-        "palantir": "eye", "dungeon-master": "castle", "homelab-ansible": "server-cog",
-        "bump-tracker-sidecar": "activity", "magpie-macos": "bird", "lambda-chrome-wxt": "puzzle",
-        "homelab": "folder-tree", "cheddar": "folder-tree",
-    ]
+    /// Optional per-repo custom glyphs: map a repo name to a Lucide icon to give it a
+    /// distinct emblem in the tree/tables. Empty by default (falls back to the
+    /// language glyph); add your own, e.g. ["my-server": "server"].
+    static let emblems: [String: String] = [:]
     static func emblem(id: String, stack: String) -> String { emblems[id] ?? langOf(stack).icon }
 }
 
