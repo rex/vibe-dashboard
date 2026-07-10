@@ -3,6 +3,28 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [1.0.0] — 2026-07-10
+
+**Vibe Dashboard 1.0 — mission control for vibe coding.**
+
+Eighty-two releases of iteration, declared done by its human. What 1.0 means:
+
+- **A real oversight console**: a fleet of agentic repos scored against their
+  own `VIBE.yaml` policies — severity-weighted grades whose "why this grade"
+  breakdown *is* the grade, hygiene detection tuned against alert fatigue,
+  waivers that actually move the number.
+- **Live agent watching**: Claude Code / Codex sessions detected from their
+  transcripts, multi-agent workflows rendered as concurrency lanes that follow
+  streams across phase hand-offs — push-driven by FSEvents, flat idle CPU.
+- **Trustworthy by contract**: nothing fake is shown as real. Every value is
+  measured or labelled honestly. 233 tests and a self-enforcing gate
+  (`make validate`) hold the line in CI.
+- **Shipped like a real Mac app**: Developer ID-signed, notarized, stapled
+  DMG; Sparkle auto-updates double-gated by EdDSA + notarization and proven
+  end-to-end against the live public feed.
+- **Open source (MIT)**, with a history scrubbed for publication and a fleet
+  policy harness anyone can adopt: any repo with a `VIBE.yaml` is a citizen.
+
 ## [0.82.0] — 2026-07-10
 
 ### Fixed
