@@ -1,14 +1,17 @@
 // MenuCommands.swift — native menu bar (Commands) + menu-bar-extra popover.
 
 import SwiftUI
+import Sparkle
 
 struct VibeCommands: Commands {
     var app: AppState
     var store: FleetStore
+    var updater: SPUUpdater
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About Vibe") { app.openSheet(.about) }
+            CheckForUpdatesView(updater: updater)
         }
         CommandGroup(after: .newItem) {
             Button("Re-scan ~/Code") { Task { await store.rescan() } }.keyboardShortcut("r")

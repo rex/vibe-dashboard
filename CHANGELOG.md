@@ -3,6 +3,25 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [0.74.0] — 2026-07-10
+
+### Added
+- **Auto-updates via Sparkle.** The app embeds Sparkle 2, checks a signed
+  appcast on a schedule, and shows release notes + an Install button when a newer
+  notarized build appears (auto-check + prompt), plus a "Check for Updates…"
+  item under the app menu. Updates are gated by an EdDSA signature over the
+  archive AND the app's Developer ID / notarization. The feed + downloads will
+  live in a dedicated PUBLIC `vibe-dashboard-releases` repo (source stays
+  private — GitHub only serves release assets publicly for public repos), with
+  `SUFeedURL` pointing at its `releases/latest/download/appcast.xml`.
+  - The updater starts only in a real shipped app: never under the unit-test
+    host (a live updater there hangs the runner) and not until `SUPublicEDKey`
+    is a real key (the repo ships a clearly-marked placeholder). The menu item
+    is present but disabled until then.
+  - Remaining setup (a public releases repo + a Sparkle EdDSA keypair, both
+    account-scoped) and the per-release publish flow are documented in
+    [docs/RELEASE.md](docs/RELEASE.md).
+
 ## [0.72.0] — 2026-07-10
 
 ### Fixed

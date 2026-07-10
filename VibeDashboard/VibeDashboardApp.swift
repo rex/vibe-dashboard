@@ -2,16 +2,36 @@
 
 import SwiftUI
 import AppKit
+import Sparkle
 
 @main
 struct VibeDashboardApp: App {
     @State private var store: FleetStore
     @State private var app: AppState
+    // Owned for the app's lifetime. Start the scheduled background checks only
+    // when there's a real signing key AND we're not the unit-test host — a live
+    // updater in the headless test host blocks the runner (first-run prompt / XPC
+    // startup) and times it out. The "Check for Updates…" item stays present
+    // either way; it's simply disabled until the updater is running.
+    private let updater: SPUStandardUpdaterController
 
     init() {
         FontRegistration.registerBundledFonts()
         _store = State(initialValue: FleetStore())
         _app = State(initialValue: AppState())
+        updater = SPUStandardUpdaterController(
+            startingUpdater: Self.shouldStartUpdater,
+            updaterDelegate: nil, userDriverDelegate: nil)
+    }
+
+    /// Auto-updates run only in a real, shipped app: not under XCTest/Swift Testing,
+    /// and not until `SUPublicEDKey` is a real key (the repo ships a placeholder).
+    private static var shouldStartUpdater: Bool {
+        let underTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+        let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String ?? ""
+        let keyConfigured = !key.isEmpty && !key.hasPrefix("REPLACE_")
+        return !underTest && keyConfigured
     }
 
     var body: some Scene {
@@ -40,7 +60,7 @@ struct VibeDashboardApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1440, height: 900)
-        .commands { VibeCommands(app: app, store: store) }
+        .commands { VibeCommands(app: app, store: store, updater: updater.updater) }
 
         // Agent transcript watching gets a real, resizable window per target —
         // a monitoring surface, not a modal sheet.

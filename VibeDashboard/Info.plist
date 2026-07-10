@@ -24,6 +24,16 @@
     <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
+    <!-- Sparkle auto-update. The appcast is served from the PUBLIC releases repo
+         (source stays private). SUPublicEDKey is the base64 ed25519 PUBLIC key
+         printed by `generate_keys` — replace the placeholder; the private half
+         stays in the Keychain (and, backed up, in 1Password). See docs/RELEASE.md. -->
+    <key>SUFeedURL</key>
+    <string>https://github.com/rex/vibe-dashboard-releases/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
     <key>NSHumanReadableCopyright</key>
     <string>Vibe Dashboard — mission control for vibe coding.</string>
     <key>NSMainNibFile</key>
