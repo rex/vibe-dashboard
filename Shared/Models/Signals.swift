@@ -86,6 +86,7 @@ struct AgentInfo: Sendable, Hashable {
     var sessionKind: AgentSessionKind = .standard
     var transcriptPath: String? = nil
     var workflowId: String? = nil
+    var agentCount: Int? = nil       // workflow cards: agent transcripts currently in play
     var model: String? = nil         // recorded in the transcript; nil = not recorded (hide)
     var effort: String? = nil        // Codex reasoning effort; Claude doesn't record one
     var contextTokens: Int? = nil    // context-window tokens as of the last turn
@@ -108,6 +109,7 @@ extension AgentInfo {
             sessionKind: s.kind,
             transcriptPath: s.transcriptPath,
             workflowId: s.workflowId,
+            agentCount: s.agentCount,
             model: s.telemetry.model,
             effort: s.telemetry.effort,
             contextTokens: s.telemetry.contextTokens,

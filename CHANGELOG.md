@@ -3,6 +3,29 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [1.1.0] — 2026-07-14
+
+### Fixed
+- **Sessions at a workspace root were invisible.** The Agents view, the fleet
+  "agents active" total, and the workspace detail count all iterated leaf repos
+  only — so a session running AT a workspace root (a multi-repo session driving
+  an ecosystem dir) attached to the workspace repo and then appeared nowhere.
+  Found live: five sessions running (two mains at workspace roots, two
+  workflows, one standard) with exactly one visible. All three surfaces now
+  include workspace-attached sessions.
+- **Workflow cards no longer migrate between repos.** A workflow card's repo
+  attachment followed whichever agent transcript was newest, so the card hopped
+  between the workspace root (invisible, see above) and whatever component repo
+  an agent happened to be working in — rendering as a lone "agent inside a
+  workflow" on the wrong repo row, then vanishing on the next tick. The card is
+  now homed at the OWNING session's cwd (read from the parent transcript, with
+  the newest-agent fallback preserved); the newest agent still drives
+  lifecycle and telemetry.
+
+### Added
+- Workflow session cards show their lane count ("· N agents") beside the
+  workflow id — a workflow reads as a group, not as one lone agent.
+
 ## [1.0.0] — 2026-07-10
 
 **Vibe Dashboard 1.0 — mission control for vibe coding.**

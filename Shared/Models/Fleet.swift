@@ -118,7 +118,10 @@ struct Fleet: Sendable {
     var skillRollup: [SkillRollup] = []
 
     var sessions: [FleetAgentSession] {
-        leaves.flatMap { repo in
+        // ALL repos, workspaces included: a session whose cwd is a workspace ROOT
+        // (a multi-repo session at e.g. an ecosystem dir) attaches to the workspace
+        // repo — iterating only leaves made every such session invisible.
+        repos.flatMap { repo in
             repo.agentSessions.map { FleetAgentSession(repo: repo, agent: $0) }
         }
         .sorted {
@@ -176,7 +179,7 @@ struct Fleet: Sendable {
         t.godFiles = leaves.reduce(0) { $0 + $1.census.godFiles.count }
         t.dirty = leaves.filter { !$0.worktree.clean }.count
         t.compliance = leaves.isEmpty ? 100 : Int((leaves.reduce(0) { $0 + $1.compliance }) / leaves.count)
-        t.agentsActive = leaves.reduce(0) { $0 + $1.agentSessions.count }
+        t.agentsActive = repos.reduce(0) { $0 + $1.agentSessions.count }   // incl. workspace-root sessions
         t.abandonedWorktrees = leaves.reduce(0) { $0 + $1.abandonedWorktrees }
         t.staleWorktrees = leaves.reduce(0) { $0 + $1.staleWorktrees }
         t.bloatedDocs = leaves.filter { $0.docs.taskState.status == .fail || $0.docs.agentsMd.status == .fail }.count

@@ -67,12 +67,24 @@ enum AgentTranscriptProbe {
     /// One session for a whole workflow: representative = the newest-written agent
     /// transcript (its embedded timestamps drive lifecycle), identity = the workflow
     /// id, so the Agents grid shows "the workflow", not eight agent-file cards.
+    /// The card's HOME is the OWNING session's cwd (from the parent transcript), not
+    /// the newest agent's: agents hop across component repos and worktrees, so a card
+    /// that follows them migrates between repo rows — or vanishes — tick to tick.
     static func workflowSession(dir: String, files: [String], now: Date) -> AgentProbe.Session? {
-        let newest = files
-            .filter { recentlyTouched($0, now: now) }
-            .max { (mtime($0) ?? .distantPast) < (mtime($1) ?? .distantPast) }
+        let recent = files.filter { recentlyTouched($0, now: now) }
+        let newest = recent.max { (mtime($0) ?? .distantPast) < (mtime($1) ?? .distantPast) }
         guard let newest, var s = session(path: newest, tool: "claude-code", now: now) else { return nil }
         s.id = "claude-code:wf:" + (s.workflowId ?? (dir as NSString).lastPathComponent)
+        s.agentCount = recent.count
+        if let parent = parentSessionFile(of: newest),
+           let attrs = try? fm.attributesOfItem(atPath: parent),
+           let pm = attrs[.modificationDate] as? Date {
+            let facts = TranscriptFactsCache.facts(path: parent, mtime: pm,
+                                                   size: (attrs[.size] as? UInt64) ?? 0) {
+                parseFacts(path: parent, tool: "claude-code")
+            }
+            if let cwd = facts.cwd, !cwd.isEmpty { s.cwd = normalizedPath(cwd) }
+        }
         return s
     }
 

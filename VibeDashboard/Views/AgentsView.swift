@@ -213,6 +213,10 @@ private struct SessionCard: View {
                             .foregroundStyle(Theme.color.textFaint)
                             .monospacedDigit()
                     }
+                    if let n = agent.agentCount {
+                        Text("· \(n) agent\(n == 1 ? "" : "s")")
+                            .foregroundStyle(Theme.color.textSecondary)
+                    }
                     if let workflowId = agent.workflowId {
                         Text("· \(workflowId)").foregroundStyle(Theme.color.textGhost)
                     }

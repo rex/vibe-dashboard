@@ -23,7 +23,10 @@ struct WorkspaceDetailView: View {
         children.isEmpty ? 100 : children.reduce(0) { $0 + $1.compliance } / children.count
     }
     private var totalSurprises: Int { children.reduce(0) { $0 + $1.surprises.count } }
-    private var agentsActive: Int { children.reduce(0) { $0 + $1.agentSessions.count } }
+    // The workspace's OWN sessions count too — a multi-repo session runs AT the root.
+    private var agentsActive: Int {
+        workspace.agentSessions.count + children.reduce(0) { $0 + $1.agentSessions.count }
+    }
 
     var body: some View {
         ScrollView {

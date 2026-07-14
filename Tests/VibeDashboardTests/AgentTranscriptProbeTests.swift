@@ -109,6 +109,39 @@ struct TranscriptSessionTests {
         #expect(sessions.first?.lastActivity == RelTime.iso.date(from: "2026-07-09T02:55:00Z"))
     }
 
+    @Test("a workflow card lives at its OWNING session's cwd, not the newest agent's")
+    func workflowHomeIsParentSessionCwd() throws {
+        let now = try #require(RelTime.iso.date(from: "2026-07-09T03:00:00Z"))
+        let root = try tempDir()
+        let project = root.appendingPathComponent("project")
+        let nested = project
+            .appendingPathComponent("session")
+            .appendingPathComponent("subagents")
+            .appendingPathComponent("workflows")
+            .appendingPathComponent("wf_home")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        // The owning session runs at the workspace ROOT…
+        let parentBody = try claudeLine(timestamp: "2026-07-09T02:58:00Z",
+                                        cwd: "/Users/dev/Code/workspace", id: "parent")
+        try writeTranscript(parentBody, to: project.appendingPathComponent("session.jsonl"),
+                            mtime: #require(RelTime.iso.date(from: "2026-07-09T02:58:00Z")))
+        // …while the workflow's NEWEST agent works inside a component repo. Without
+        // the parent-home rule the card would migrate to the component (or wherever
+        // the newest agent happens to be) on every tick.
+        for (name, ts, cwd) in [("agent-a.jsonl", "2026-07-09T02:40:00Z", "/Users/dev/Code/workspace"),
+                                ("agent-b.jsonl", "2026-07-09T02:55:00Z", "/Users/dev/Code/workspace/component")] {
+            let body = try claudeLine(timestamp: ts, cwd: cwd, id: "subagent")
+            try writeTranscript(body, to: nested.appendingPathComponent(name),
+                                mtime: #require(RelTime.iso.date(from: ts)))
+        }
+
+        let sessions = AgentTranscriptProbe.claudeSessions(root: root.path, now: now)
+        let wf = try #require(sessions.first { $0.kind == .workflow })
+        #expect(wf.cwd == "/Users/dev/Code/workspace")   // the parent's home, not the agent's
+        #expect(wf.agentCount == 2)                      // both lanes counted on the card
+        #expect(sessions.count == 2)                     // the main session card survives alongside
+    }
+
     @Test("subagents fold into their live parent session and extend its activity")
     func subagentsFoldIntoParent() throws {
         let now = try #require(RelTime.iso.date(from: "2026-07-09T03:00:00Z"))

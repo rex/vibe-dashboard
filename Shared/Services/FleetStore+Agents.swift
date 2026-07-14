@@ -187,7 +187,7 @@ extension FleetStore {
                 || a.filesTouched != b.filesTouched || a.linesAdded != b.linesAdded
                 || a.linesRemoved != b.linesRemoved || a.model != b.model
                 || a.contextTokens != b.contextTokens || a.note != b.note
-                || a.branch != b.branch { return true }
+                || a.branch != b.branch || a.agentCount != b.agentCount { return true }
             let ta = a.lastActivityAt ?? .distantPast
             let tb = b.lastActivityAt ?? .distantPast
             if abs(tb.timeIntervalSince(ta)) > 60 { return true }
