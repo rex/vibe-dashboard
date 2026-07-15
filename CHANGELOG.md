@@ -3,6 +3,16 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [1.4.0] — 2026-07-15
+
+### Fixed
+- **Fleet-wide live agents remain visible with "VIBE only" enabled.** Live
+  coding sessions are now sourced from the raw fleet, while explicitly ignored
+  repositories remain hidden.
+- **Codex subagents render as distinct cards.** Forked Codex rollouts now use
+  their own transcript ID rather than their parent session ID, and display the
+  `subagent` session kind.
+
 ## [1.1.0] — 2026-07-14
 
 ### Fixed
