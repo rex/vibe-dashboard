@@ -147,7 +147,7 @@ enum AgentTranscriptProbe {
             elapsed: RelTime.compact(now.timeIntervalSince(facts.start ?? last)),
             lastActivity: last,
             state: state,
-            kind: shape.kind,
+            kind: tool == "codex" ? facts.kind : shape.kind,
             transcriptPath: path,
             workflowId: shape.workflowId,
             telemetry: facts.telemetry
@@ -163,7 +163,8 @@ enum AgentTranscriptProbe {
         f.last = newestTimestamp(in: tail) ?? newestTimestamp(in: head)
         f.cwd = newestCwd(in: tail) ?? firstCwd(in: head)
         f.start = firstTimestamp(in: head) ?? f.last
-        f.sessionKey = sessionIdentifier(head: head, tail: tail)
+        f.sessionKey = sessionIdentifier(head: head, tail: tail, tool: tool)
+        f.kind = transcriptKind(head: head, path: path, tool: tool)
         f.telemetry = SessionTelemetry.read(tail: tail, tool: tool)
         return f
     }
@@ -320,13 +321,27 @@ enum AgentTranscriptProbe {
         return nil
     }
 
-    private static func sessionIdentifier(head: String, tail: String) -> String? {
+    private static func sessionIdentifier(head: String, tail: String, tool: String) -> String? {
         for line in lines(head) + lines(tail) {
             guard let obj = object(line), obj["type"] as? String == "session_meta" else { continue }
+            // A Codex subagent carries its own rollout id alongside its parent's
+            // `session_id`; the former is the transcript/card identity.
+            if tool == "codex", let payload = obj["payload"] as? [String: Any],
+               let id = payload["id"] as? String, !id.isEmpty { return id }
             if let value = string(in: obj, keys: ["sessionId", "session_id", "id"]) { return value }
         }
-        return newestString(in: tail, keys: ["sessionId", "session_id"])
-            ?? firstString(in: head, keys: ["sessionId", "session_id", "id"])
+        let keys = tool == "codex" ? ["id", "sessionId", "session_id"] : ["sessionId", "session_id", "id"]
+        return newestString(in: tail, keys: keys) ?? firstString(in: head, keys: keys)
+    }
+
+    private static func transcriptKind(head: String, path: String, tool: String) -> AgentSessionKind {
+        guard tool == "codex" else { return transcriptShape(path: path, tool: tool).kind }
+        for line in lines(head) {
+            guard let obj = object(line), obj["type"] as? String == "session_meta",
+                  let payload = obj["payload"] as? [String: Any] else { continue }
+            if payload["thread_source"] as? String == "subagent" { return .subagent }
+        }
+        return .standard
     }
 
     private static func lines(_ text: String) -> [String] {

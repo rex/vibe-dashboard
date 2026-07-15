@@ -14,6 +14,7 @@ struct TranscriptFacts: Sendable {
     var last: Date?
     var cwd: String?
     var sessionKey: String?
+    var kind: AgentSessionKind = .standard
     var telemetry = SessionTelemetry()
 }
 
