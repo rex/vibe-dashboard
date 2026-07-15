@@ -2,11 +2,11 @@
 
 import Foundation
 
-/// State of the on-demand fleet scan. This app runs a MANUAL scan (triggered by
-/// the user / a rescan) — there is no fsevents watcher and no sweep timer, so
-/// nothing here may imply continuous monitoring. `lastSweepAt` + `swept` are the
-/// only real telemetry; the legacy flags below are kept solely so readers outside
-/// this slice keep compiling and are no longer rendered as "live/online/watching".
+/// State of the on-demand fleet scan. Full fleet scans are manual; live agent
+/// detection is monitored separately through FSEvents plus a safety poll.
+/// `lastSweepAt` + `swept` are the only full-scan telemetry; the legacy flags
+/// below are kept solely so readers outside this slice keep compiling and are no
+/// longer rendered as "live/online/watching".
 struct ScannerState: Sendable, Hashable {
     var host: String = "localhost"
     var root: String = "~/Code"
@@ -118,6 +118,14 @@ struct Fleet: Sendable {
     var skillRollup: [SkillRollup] = []
 
     var sessions: [FleetAgentSession] {
+        Self.sessions(for: repos)
+    }
+
+    /// Flatten the agent cards for an explicit repo scope. The policy-filtered Fleet
+    /// uses this for its normal views; FleetStore uses it with the raw fleet so the
+    /// global Agents surface never loses a live session just because its repo has no
+    /// VIBE.yaml yet.
+    static func sessions(for repos: [Repo]) -> [FleetAgentSession] {
         // ALL repos, workspaces included: a session whose cwd is a workspace ROOT
         // (a multi-repo session at e.g. an ecosystem dir) attaches to the workspace
         // repo — iterating only leaves made every such session invisible.

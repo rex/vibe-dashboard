@@ -188,6 +188,21 @@ final class FleetStore {
         return rawFleet.repos.filter { $0.kind != .workspace && !$0.vibePresent }.count
     }
 
+    /// The fleet-wide operational view deliberately bypasses the VIBE.yaml filter:
+    /// an agent can be actively creating the policy file, and hiding that session is
+    /// exactly when the dashboard is most needed. Explicitly ignored repos stay out.
+    var liveAgentSessions: [FleetAgentSession] {
+        Fleet.sessions(for: Self.agentSessionRepos(rawFleet.repos,
+                                                   ignoredIds: ignoredIds,
+                                                   showIgnored: showIgnored))
+    }
+    var liveAgentSessionCount: Int { liveAgentSessions.count }
+
+    nonisolated static func agentSessionRepos(_ repos: [Repo], ignoredIds: Set<String>,
+                                              showIgnored: Bool) -> [Repo] {
+        showIgnored ? repos : repos.filter { !ignoredIds.contains($0.id) }
+    }
+
     private func persistIgnore() {
         UserDefaults.standard.set(Array(ignoredIds), forKey: Self.ignoreKey)
     }

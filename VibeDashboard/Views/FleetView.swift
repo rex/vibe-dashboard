@@ -16,11 +16,12 @@ struct FleetView: View {
 
     var body: some View {
         let t = store.fleet.totals
+        let agentSessions = store.liveAgentSessions
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.space.x4) {
                 VStack(alignment: .leading, spacing: Theme.space.x1_5) {
                     Text("Fleet").font(VibeFont.sans(VibeFont.size.xxl, .semibold)).tracking(VibeFont.size.xxl * -0.02).foregroundStyle(Theme.color.textBright)
-                    headline(t)
+                    headline(t, sessions: agentSessions)
                 }
 
                 VibePanel(glow: t.danger == 0, flushBody: true) {
@@ -31,7 +32,7 @@ struct FleetView: View {
                                  help: "Managed repos in view (workspaces not counted)")
                         StatTile(value: "\(t.compliance)", unit: "%", label: "compliance", tone: complianceTone(t.compliance), icon: "gauge",
                                  help: "Average compliance score across visible repos — 100 minus each repo's deductions")
-                        StatTile(value: "\(t.agentsActive)", label: "working", tone: t.agentsActive > 0 ? .warn : .ok, icon: "bot",
+                        StatTile(value: "\(agentSessions.count)", label: "working", tone: agentSessions.isEmpty ? .ok : .warn, icon: "bot",
                                  help: "Live agent sessions detected right now — click for the Agents module") { app.goView(.agents) }
                         StatTile(value: "\(t.abandonedWorktrees)", label: "abandoned", tone: t.abandonedWorktrees > 0 ? .danger : .ok, icon: "git-branch",
                                  help: "Worktrees with no commit in 30+ days — click to review sprawl") { app.goView(.agents) }
@@ -72,10 +73,10 @@ struct FleetView: View {
         }
     }
 
-    @ViewBuilder private func headline(_ t: FleetTotals) -> some View {
+    @ViewBuilder private func headline(_ t: FleetTotals, sessions: [FleetAgentSession]) -> some View {
         Group {
-            if t.agentsActive > 0, let s = store.fleet.sessions.first {
-                Text("\(t.agentsActive) agent\(t.agentsActive > 1 ? "s" : "") working").foregroundStyle(Theme.color.warn)
+            if let s = sessions.first {
+                Text("\(sessions.count) agent\(sessions.count > 1 ? "s" : "") working").foregroundStyle(Theme.color.warn)
                 + Text(" · \(t.abandonedWorktrees) abandoned worktrees · \(s.repo.name) is being edited live.")
                     .foregroundStyle(Theme.color.textSecondary)
             } else {

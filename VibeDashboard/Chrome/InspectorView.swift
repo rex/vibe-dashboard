@@ -26,6 +26,7 @@ struct InspectorView: View {
 private struct FleetInspector: View {
     let fleet: Fleet
     @Environment(AppState.self) private var app
+    @Environment(FleetStore.self) private var store
     var body: some View {
         let t = fleet.totals
         Text("fleet oversight").vibeMicroLabel(VibeFont.size.xs, color: Theme.color.textSecondary)
@@ -34,7 +35,7 @@ private struct FleetInspector: View {
                 MetaRow(key: "in policy") { Text("\(t.healthy)").foregroundStyle(Theme.color.ok) }
                 MetaRow(key: "drifting") { Text("\(t.warn)").foregroundStyle(Theme.color.warn) }
                 MetaRow(key: "surprises") { Text("\(t.danger)").foregroundStyle(Theme.color.danger) }
-                MetaRow(key: "agents working") { Text("\(t.agentsActive)") }
+                MetaRow(key: "agents working") { Text("\(store.liveAgentSessionCount)") }
                 MetaRow(key: "abandoned worktrees") { Text("\(t.abandonedWorktrees)") }
                 MetaRow(key: "doc bloat") { Text("\(t.bloatedDocs)") }
                 MetaRow(key: "guardrail-less") { Text("\(t.guardrailless)").foregroundStyle(t.guardrailless > 0 ? Theme.color.danger : Theme.color.textPrimary) }

@@ -118,11 +118,11 @@ struct MenuBarContent: View {
                 Text("\(t.danger) surprises").foregroundStyle(Theme.color.danger)
             }
             .font(VibeFont.mono(VibeFont.size.xs))
-            Text("agents working now · \(t.agentsActive)").vibeMicroLabel(VibeFont.size.xxs, color: Theme.color.textFaint)
-            if store.fleet.sessions.isEmpty {
+            Text("agents working now · \(store.liveAgentSessionCount)").vibeMicroLabel(VibeFont.size.xxs, color: Theme.color.textFaint)
+            if store.liveAgentSessions.isEmpty {
                 Text("none — fleet is quiet").font(VibeFont.mono(VibeFont.size.xs)).foregroundStyle(Theme.color.textMuted)
             } else {
-                ForEach(store.fleet.sessions) { s in
+                ForEach(store.liveAgentSessions) { s in
                     HStack(spacing: Theme.space.x2) {
                         AgentPulse(active: true, color: s.repo.health == .danger ? Theme.color.danger : Theme.color.warn, size: 11)
                         Text(s.repo.name).font(VibeFont.mono(VibeFont.size.xs)).foregroundStyle(Theme.color.textPrimary)

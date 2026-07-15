@@ -40,7 +40,7 @@ struct AgentsView: View {
     @Environment(AppState.self) private var app
     @Environment(FleetStore.self) private var store
 
-    private var sessions: [FleetAgentSession] { store.fleet.sessions }
+    private var sessions: [FleetAgentSession] { store.liveAgentSessions }
     private var sprawl: [(repo: Repo, worktree: Worktree)] {
         store.fleet.worktreeSprawl.sorted { a, b in
             rank(a.worktree.state) < rank(b.worktree.state)
@@ -62,7 +62,7 @@ struct AgentsView: View {
         let t = store.fleet.totals
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.space.x4) {
-                header(t)
+                header(t, agentCount: sessions.count)
                 WorkingNowSection(sessions: sessions)
                 HStack(alignment: .top, spacing: Theme.space.x4) {
                     DocBloatPanel(repos: bloat).frame(maxWidth: .infinity, alignment: .top)
@@ -74,15 +74,15 @@ struct AgentsView: View {
         }
     }
 
-    @ViewBuilder private func header(_ t: FleetTotals) -> some View {
+    @ViewBuilder private func header(_ t: FleetTotals, agentCount: Int) -> some View {
         VStack(alignment: .leading, spacing: Theme.space.x1_5) {
             Text("Agents")
                 .font(VibeFont.sans(VibeFont.size.xxl, .semibold))
                 .tracking(VibeFont.size.xxl * -0.02)
                 .foregroundStyle(Theme.color.textBright)
             (
-                Text("\(t.agentsActive) working now")
-                    .foregroundStyle(t.agentsActive > 0 ? Theme.color.warn : Theme.color.ok)
+                Text("\(agentCount) working now")
+                    .foregroundStyle(agentCount > 0 ? Theme.color.warn : Theme.color.ok)
                 + Text(" · \(t.abandonedWorktrees) abandoned worktrees")
                     .foregroundStyle(Theme.color.textSecondary)
                 + Text(" · \(t.bloatedDocs) bloated docs")

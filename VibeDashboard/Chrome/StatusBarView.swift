@@ -7,6 +7,7 @@ struct StatusBarView: View {
 
     var body: some View {
         let t = store.fleet.totals
+        let agentCount = store.liveAgentSessionCount
         let s = store.fleet.scanner
         let b = store.fleet.appBuild
         let lastSwept = s.lastSweepAt.map { RelTime.ago($0, now: Date()) } ?? "—"
@@ -33,10 +34,10 @@ struct StatusBarView: View {
                 + Text(" · \(b.date) · \(b.channel)").foregroundStyle(Theme.color.textFaint)
             }
             Spacer(minLength: Theme.space.x2)
-            if t.agentsActive > 0 {
+            if agentCount > 0 {
                 HStack(spacing: 6) {
                     AgentPulse(active: true, color: Theme.color.warn, size: 9)
-                    Text("\(t.agentsActive) agent\(t.agentsActive > 1 ? "s" : "") working").foregroundStyle(Theme.color.warn)
+                    Text("\(agentCount) agent\(agentCount > 1 ? "s" : "") working").foregroundStyle(Theme.color.warn)
                 }
             } else {
                 Text("no agents working").foregroundStyle(Theme.color.textFaint)

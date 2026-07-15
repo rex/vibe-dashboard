@@ -63,7 +63,10 @@ struct ToolbarView: View {
     private func navWithCounts(_ t: FleetTotals) -> [SegOption<AppView>] {
         nav.map { o in
             var o = o
-            if o.value == .agents { o.count = t.agentsActive > 0 ? t.agentsActive : nil }
+            if o.value == .agents {
+                let count = store.liveAgentSessionCount
+                o.count = count > 0 ? count : nil
+            }
             if o.value == .findings { o.count = t.surprises > 0 ? t.surprises : nil }
             return o
         }
