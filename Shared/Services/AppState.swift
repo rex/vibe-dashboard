@@ -26,6 +26,7 @@ struct AgentWatchTarget: Hashable, Codable, Sendable {
     var kind: AgentSessionKind
     var transcriptPath: String
     var workflowId: String?
+    var memberTranscriptPaths: [String] = []
 }
 
 extension AgentWatchTarget {
@@ -35,7 +36,8 @@ extension AgentWatchTarget {
         guard let path = agent.transcriptPath else { return nil }
         self.init(repoName: repo.name, repoPath: repo.absolutePath,
                   tool: agent.tool ?? "agent", kind: agent.sessionKind,
-                  transcriptPath: path, workflowId: agent.workflowId)
+                  transcriptPath: path, workflowId: agent.workflowId,
+                  memberTranscriptPaths: agent.memberTranscriptPaths)
     }
 }
 

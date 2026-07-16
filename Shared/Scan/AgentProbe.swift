@@ -35,6 +35,7 @@ enum AgentProbe {
         var transcriptPath: String? = nil
         var workflowId: String? = nil
         var agentCount: Int? = nil   // workflow cards: agent transcripts currently in play
+        var memberTranscriptPaths: [String] = []  // workflow panes, parent first when known
         var telemetry = SessionTelemetry()   // model / effort / context tokens (nil = not recorded)
     }
 
@@ -172,6 +173,34 @@ enum AgentProbe {
             stat.lastWrite = newest
         }
         return stat
+    }
+
+    /// Measure each distinct working directory once. A Codex parent and its
+    /// subagents commonly share one checkout; probing per session made a busy
+    /// workflow issue identical `git diff` / `git status` calls serially and held
+    /// the live-refresh gate long enough to lose FSEvent updates.
+    static func workStats(for sessions: [Session], now: Date) async -> [String: WorkStat] {
+        let cwds = Array(Set(sessions.map { AgentTranscriptProbe.normalizedPath($0.cwd) }))
+        guard !cwds.isEmpty else { return [:] }
+        let byCwd = await withTaskGroup(of: (String, WorkStat).self,
+                                        returning: [String: WorkStat].self) { group in
+            var pending = cwds.makeIterator()
+            for _ in 0..<min(4, cwds.count) {
+                guard let cwd = pending.next() else { break }
+                group.addTask { (cwd, await workStat(cwd: cwd, now: now)) }
+            }
+            var results: [String: WorkStat] = [:]
+            while let (cwd, stat) = await group.next() {
+                results[cwd] = stat
+                if let next = pending.next() {
+                    group.addTask { (next, await workStat(cwd: next, now: now)) }
+                }
+            }
+            return results
+        }
+        return Dictionary(uniqueKeysWithValues: sessions.map {
+            ($0.id, byCwd[AgentTranscriptProbe.normalizedPath($0.cwd)] ?? WorkStat())
+        })
     }
 
     private static func cwd(of pid: Int) async -> String? {

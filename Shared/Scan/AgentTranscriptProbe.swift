@@ -105,7 +105,7 @@ enum AgentTranscriptProbe {
         root: String = (NSHomeDirectory() as NSString).appendingPathComponent(".codex/sessions"),
         now: Date
     ) -> [AgentProbe.Session] {
-        transcriptSessions(paths: jsonlFiles(under: root), tool: "codex", now: now)
+        CodexTranscriptProbe.sessions(root: root, now: now)
     }
 
     static func transcriptSessions(paths: [String], tool: String, now: Date) -> [AgentProbe.Session] {

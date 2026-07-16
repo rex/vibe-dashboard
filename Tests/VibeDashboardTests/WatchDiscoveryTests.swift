@@ -54,6 +54,45 @@ struct WatchDiscoveryTests {
         #expect(!p2.done)
     }
 
+    @Test("Codex workflow exposes its parent and every subagent as stable panes")
+    func codexWorkflowDiscovery() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vibe-codex-wf-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let parent = dir.appendingPathComponent("rollout-parent.jsonl")
+        let first = dir.appendingPathComponent("rollout-child-a.jsonl")
+        let second = dir.appendingPathComponent("rollout-child-b.jsonl")
+        try codexMeta(id: "parent", parentID: "parent", source: "user").write(
+            to: parent, atomically: true, encoding: .utf8)
+        try codexMeta(id: "child-a", parentID: "parent", source: "subagent").write(
+            to: first, atomically: true, encoding: .utf8)
+        try codexMeta(id: "child-b", parentID: "parent", source: "subagent").write(
+            to: second, atomically: true, encoding: .utf8)
+        let stale = dir.appendingPathComponent("rollout-child-stale.jsonl")
+        try codexMeta(id: "child-stale", parentID: "parent", source: "subagent").write(
+            to: stale, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-2 * 60 * 60)], ofItemAtPath: stale.path)
+        let target = AgentWatchTarget(repoName: "repo", repoPath: "/tmp/repo", tool: "codex",
+                                      kind: .workflow, transcriptPath: parent.path, workflowId: "parent",
+                                      memberTranscriptPaths: [parent.path, first.path, second.path])
+
+        let firstSnapshot = AgentWatchModel.discoverLanes(
+            target: target, prior: .init(lanes: [], meta: WatchWorkflowMeta()))
+        #expect(firstSnapshot.lanes.count == 3)
+        #expect(firstSnapshot.lanes[0].segments.first?.isMain == true)
+        #expect(firstSnapshot.lanes.flatMap(\.segments).map(\.path).contains(second.path))
+        #expect(!firstSnapshot.lanes.flatMap(\.segments).map(\.path).contains(stale.path))
+
+        let third = dir.appendingPathComponent("rollout-child-c.jsonl")
+        try codexMeta(id: "child-c", parentID: "parent", source: "subagent").write(
+            to: third, atomically: true, encoding: .utf8)
+        let secondSnapshot = AgentWatchModel.discoverLanes(target: target, prior: firstSnapshot)
+        #expect(secondSnapshot.lanes.count == 4)
+        #expect(secondSnapshot.lanes[0].segments.first?.path == parent.path)
+        #expect(secondSnapshot.lanes.flatMap(\.segments).map(\.path).contains(third.path))
+    }
+
     /// A standard session fixture: `<dir>/sess.jsonl` + `<dir>/sess/subagents/`.
     private func standardFixture() throws -> (target: AgentWatchTarget, subagents: URL) {
         let dir = FileManager.default.temporaryDirectory
@@ -231,5 +270,10 @@ struct WatchDiscoveryTests {
         #expect(WatchAgentMeta.promptTitle(transcriptPath: file.path)
                 == "REPO: /x. You are the VERIFY stage.")
         #expect(WatchAgentMeta.promptTitle(transcriptPath: "/nonexistent") == nil)
+    }
+
+    private func codexMeta(id: String, parentID: String, source: String) -> String {
+        #"{"timestamp":"2026-07-15T13:29:00Z","type":"session_meta","payload":{"#
+            + #""id":"\#(id)","session_id":"\#(parentID)","thread_source":"\#(source)","cwd":"/tmp/repo"}}"#
     }
 }

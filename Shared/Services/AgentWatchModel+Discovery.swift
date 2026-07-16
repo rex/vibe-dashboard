@@ -41,6 +41,9 @@ extension AgentWatchModel {
         }
 
         switch target.kind {
+        case .workflow where target.tool == "codex":
+            return codexWorkflowSnapshot(target: target, prior: prior, existing: byPath)
+
         case .workflow:
             let dir = (target.transcriptPath as NSString).deletingLastPathComponent
             let journal = WatchJournal.read(dir: dir)

@@ -115,6 +115,7 @@ struct FleetScanner: Sendable {
     /// background refresh so a full scan and a 2-minute refresh build identical sessions.
     private func attachLiveSessions(_ repos: inout [Repo], now: Date) async {
         let sessions = await AgentProbe.sessions(now: now)
+        let work = await AgentProbe.workStats(for: sessions, now: now)
         var target: [Int: [AgentInfo]] = [:]
         for s in sessions {
             let sessionCwd = AgentTranscriptProbe.normalizedPath(s.cwd)
@@ -124,8 +125,7 @@ struct FleetScanner: Sendable {
                     return sessionCwd == repoPath || sessionCwd.hasPrefix(repoPath + "/")
                 })
                 .max(by: { repos[$0].absolutePath.count < repos[$1].absolutePath.count }) else { continue }
-            let work = await AgentProbe.workStat(cwd: repos[idx].absolutePath, now: now)
-            target[idx, default: []].append(AgentInfo.live(session: s, work: work,
+            target[idx, default: []].append(AgentInfo.live(session: s, work: work[s.id] ?? .init(),
                                                            clean: repos[idx].worktree.clean,
                                                            branch: repos[idx].build.branch, now: now))
         }

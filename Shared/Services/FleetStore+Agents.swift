@@ -68,7 +68,6 @@ extension FleetStore {
             try? await Task.sleep(for: .seconds(delay))
             guard let self else { return }
             self.agentFsDebounce = nil
-            self.lastAgentRefresh = Date()
             await self.refreshAgents()
         }
     }
@@ -118,15 +117,25 @@ extension FleetStore {
     /// clears its repo's agent. All sessions + measured work are gathered up front
     /// (async), then applied in one synchronous main-actor pass against the CURRENT
     /// rawFleet — so a full rescan that completed during the awaits is never clobbered.
-    /// Coalesced: a tick that lands while one is still probing is dropped, not queued
-    /// (the in-flight pass already reads the freshest state).
+    /// Coalesced: a tick that lands while one is still probing asks for exactly one
+    /// follow-up pass. Transcript writes that arrive during a slow probe therefore
+    /// cannot leave the app stuck on a stale snapshot.
     func refreshAgents(now: Date = Date()) async {
-        guard !agentRefreshInFlight else { return }
+        guard !agentRefreshInFlight else {
+            agentRefreshRequested = true
+            return
+        }
         agentRefreshInFlight = true
-        defer { agentRefreshInFlight = false }
+        defer {
+            agentRefreshInFlight = false
+            lastAgentRefresh = Date()
+            if agentRefreshRequested {
+                agentRefreshRequested = false
+                Task { [weak self] in await self?.refreshAgents() }
+            }
+        }
         let sessions = await AgentProbe.sessions(now: now)
-        var work: [String: AgentProbe.WorkStat] = [:]
-        for s in sessions { work[s.id] = await AgentProbe.workStat(cwd: s.cwd, now: now) }
+        let work = await AgentProbe.workStats(for: sessions, now: now)
         applyAgentSessions(sessions, work: work, now: now)
     }
 
@@ -187,7 +196,8 @@ extension FleetStore {
                 || a.filesTouched != b.filesTouched || a.linesAdded != b.linesAdded
                 || a.linesRemoved != b.linesRemoved || a.model != b.model
                 || a.contextTokens != b.contextTokens || a.note != b.note
-                || a.branch != b.branch || a.agentCount != b.agentCount { return true }
+                || a.branch != b.branch || a.agentCount != b.agentCount
+                || a.memberTranscriptPaths != b.memberTranscriptPaths { return true }
             let ta = a.lastActivityAt ?? .distantPast
             let tb = b.lastActivityAt ?? .distantPast
             if abs(tb.timeIntervalSince(ta)) > 60 { return true }

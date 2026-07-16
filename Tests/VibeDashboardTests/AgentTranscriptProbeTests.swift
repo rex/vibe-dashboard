@@ -61,6 +61,38 @@ struct TranscriptSessionTests {
         #expect(sessions.map(\.id) == ["codex:codex-old-start-live"])
     }
 
+    @Test("Codex parent plus subagents collapse into one workflow session")
+    func codexFamilyBecomesWorkflow() throws {
+        let now = try #require(RelTime.iso.date(from: "2026-07-15T13:30:00Z"))
+        let root = try tempDir()
+        let day = root.appendingPathComponent("2026/07/15")
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let cwd = "/Users/dev/Code/live"
+        let parent = day.appendingPathComponent("rollout-parent.jsonl")
+        let children = ["child-a", "child-b", "child-c"].map {
+            day.appendingPathComponent("rollout-\($0).jsonl")
+        }
+        try writeTranscript(try codexMeta(timestamp: "2026-07-15T13:20:00Z", id: "parent",
+                                           parentID: "parent", source: "user", cwd: cwd),
+                            to: parent, mtime: now)
+        for (offset, child) in children.enumerated() {
+            let timestamp = "2026-07-15T13:2\(5 + offset):00Z"
+            try writeTranscript(try codexMeta(timestamp: timestamp, id: "child-\(Character(UnicodeScalar(97 + offset)!))",
+                                               parentID: "parent", source: "subagent", cwd: cwd),
+                                to: child, mtime: now)
+        }
+
+        let sessions = AgentTranscriptProbe.codexSessions(root: root.path, now: now)
+        let workflow = try #require(sessions.first)
+        #expect(sessions.count == 1)
+        #expect(workflow.id == "codex:wf:parent")
+        #expect(workflow.kind == .workflow)
+        #expect(workflow.agentCount == 4)
+        #expect(workflow.transcriptPath == parent.path)
+        #expect(workflow.memberTranscriptPaths == [parent.path] + children.map(\.path))
+        #expect(workflow.lastActivity == AgentTranscriptProbe.parseTimestamp("2026-07-15T13:27:00Z"))
+    }
+
     @Test("codex session id stays stable when tail events have response ids")
     func codexSessionIDIgnoresResponseIDs() throws {
         let now = try #require(RelTime.iso.date(from: "2026-07-09T03:30:00Z"))
@@ -270,6 +302,20 @@ struct TranscriptSessionTests {
                 "cwd": cwd,
                 "timestamp": payloadTimestamp
             ]
+        ])
+    }
+
+    private func codexMeta(timestamp: String, id: String, parentID: String,
+                           source: String, cwd: String) throws -> String {
+        try jsonLine([
+            "timestamp": timestamp,
+            "type": "session_meta",
+            "payload": [
+                "id": id,
+                "session_id": parentID,
+                "thread_source": source,
+                "cwd": cwd,
+            ],
         ])
     }
 

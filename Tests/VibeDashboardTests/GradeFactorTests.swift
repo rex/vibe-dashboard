@@ -212,4 +212,14 @@ struct AgentChangeGateTests {
         #expect(FleetStore.agentsMeaningfullyDiffer(old, [info("s1", at: t, files: 3)]))
         #expect(FleetStore.agentsMeaningfullyDiffer(old, []))
     }
+
+    @Test("workflow member changes refresh the watch target")
+    func workflowMemberPathsAreMeaningful() {
+        let t = Date(timeIntervalSince1970: 1_000_000)
+        var old = info("codex:wf:parent", at: t)
+        old.memberTranscriptPaths = ["/tmp/parent", "/tmp/child-a"]
+        var fresh = old
+        fresh.memberTranscriptPaths.append("/tmp/child-b")
+        #expect(FleetStore.agentsMeaningfullyDiffer([old], [fresh]))
+    }
 }

@@ -132,6 +132,7 @@ final class FleetStore {
     // stored properties must live in the class body) ----
     var agentMonitor: Task<Void, Never>?
     var agentRefreshInFlight = false
+    var agentRefreshRequested = false
     var agentFsWatcher: FSEventsWatcher?
     var repoFsWatcher: FSEventsWatcher?
     var agentFsDebounce: Task<Void, Never>?

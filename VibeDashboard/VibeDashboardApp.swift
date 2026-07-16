@@ -55,6 +55,12 @@ struct VibeDashboardApp: App {
                 // the 30s cadence covers the background; activation covers "I'm looking".
                 .onReceive(NotificationCenter.default.publisher(
                     for: NSApplication.didBecomeActiveNotification)) { _ in
+                    store.startFsMonitors()  // repair an event stream after long backgrounding
+                    Task { await store.refreshAgents() }
+                }
+                .onReceive(NSWorkspace.shared.notificationCenter.publisher(
+                    for: NSWorkspace.didWakeNotification)) { _ in
+                    store.startFsMonitors()
                     Task { await store.refreshAgents() }
                 }
         }
