@@ -5,6 +5,8 @@
 import SwiftUI
 
 extension FleetStore {
+    private static let agentWorkRefreshInterval: TimeInterval = 15
+
     // ---- background agent monitor (lightweight — no full rescan) ----
 
     /// Auto-refresh ONLY live-agent detection every `interval` seconds — Pierce's ask:
@@ -114,12 +116,8 @@ extension FleetStore {
 
     /// Re-detect live agent sessions and update ONLY the agent field on each repo — no
     /// git/census/docs re-probe. A COMPLETE session (> 1h idle, dropped by the probe)
-    /// clears its repo's agent. All sessions + measured work are gathered up front
-    /// (async), then applied in one synchronous main-actor pass against the CURRENT
-    /// rawFleet — so a full rescan that completed during the awaits is never clobbered.
-    /// Coalesced: a tick that lands while one is still probing asks for exactly one
-    /// follow-up pass. Transcript writes that arrive during a slow probe therefore
-    /// cannot leave the app stuck on a stale snapshot.
+    /// clears its repo's agent. Transcript discovery is deliberately separate from git
+    /// work measurement: a slow repo must never keep a new agent off the dashboard.
     func refreshAgents(now: Date = Date()) async {
         guard !agentRefreshInFlight else {
             agentRefreshRequested = true
@@ -135,8 +133,49 @@ extension FleetStore {
             }
         }
         let sessions = await AgentProbe.sessions(now: now)
-        let work = await AgentProbe.workStats(for: sessions, now: now)
-        applyAgentSessions(sessions, work: work, now: now)
+        agentSessionSnapshot = sessions
+        let liveIDs = Set(sessions.map(\.id))
+        agentWorkStats = agentWorkStats.filter { liveIDs.contains($0.key) }
+        applyAgentSessions(sessions, work: cachedAgentWork(for: sessions), now: now)
+        requestAgentWorkRefresh(for: sessions, now: now)
+    }
+
+    /// Git status can be slow or externally blocked. Keep it independently
+    /// coalesced and throttled; the card appears from transcript data first, then
+    /// its changed-file metrics fill in when this background pass completes.
+    private func requestAgentWorkRefresh(for sessions: [AgentProbe.Session], now: Date) {
+        let hasUnmeasuredSession = sessions.contains { agentWorkStats[$0.id] == nil }
+        guard hasUnmeasuredSession
+                || now.timeIntervalSince(lastAgentWorkRefresh) >= Self.agentWorkRefreshInterval
+        else { return }
+        guard !agentWorkRefreshInFlight else {
+            agentWorkRefreshRequested = true
+            return
+        }
+        agentWorkRefreshInFlight = true
+        lastAgentWorkRefresh = now
+        Task { [weak self, sessions] in
+            let measured = await AgentProbe.workStats(for: sessions, now: now)
+            guard let self else { return }
+            let currentIDs = Set(self.agentSessionSnapshot.map(\.id))
+            self.agentWorkStats = self.agentWorkStats.filter { currentIDs.contains($0.key) }
+            for (id, stat) in measured where currentIDs.contains(id) {
+                self.agentWorkStats[id] = stat
+            }
+            self.applyAgentSessions(self.agentSessionSnapshot,
+                                    work: self.cachedAgentWork(for: self.agentSessionSnapshot), now: Date())
+            self.agentWorkRefreshInFlight = false
+            if self.agentWorkRefreshRequested {
+                self.agentWorkRefreshRequested = false
+                self.requestAgentWorkRefresh(for: self.agentSessionSnapshot, now: Date())
+            }
+        }
+    }
+
+    private func cachedAgentWork(for sessions: [AgentProbe.Session]) -> [String: AgentProbe.WorkStat] {
+        var work: [String: AgentProbe.WorkStat] = [:]
+        for session in sessions { work[session.id] = agentWorkStats[session.id] ?? .init() }
+        return work
     }
 
     private func applyAgentSessions(_ sessions: [AgentProbe.Session],

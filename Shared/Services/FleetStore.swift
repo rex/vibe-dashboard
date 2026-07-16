@@ -133,6 +133,11 @@ final class FleetStore {
     var agentMonitor: Task<Void, Never>?
     var agentRefreshInFlight = false
     var agentRefreshRequested = false
+    var agentSessionSnapshot: [AgentProbe.Session] = []
+    var agentWorkStats: [String: AgentProbe.WorkStat] = [:]
+    var agentWorkRefreshInFlight = false
+    var agentWorkRefreshRequested = false
+    var lastAgentWorkRefresh = Date.distantPast
     var agentFsWatcher: FSEventsWatcher?
     var repoFsWatcher: FSEventsWatcher?
     var agentFsDebounce: Task<Void, Never>?
