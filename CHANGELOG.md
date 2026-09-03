@@ -3,6 +3,11 @@
 All notable changes to Vibe Dashboard are documented here. Format loosely
 follows Keep a Changelog; versions are semver from `VERSION`.
 
+## [1.7.0] — 2026-09-03
+
+### Chores
+- chore: Serena removed (retired 2026-09-03): .mcp.json entry, .serena/, rules/flags
+
 ## [1.4.0] — 2026-07-15
 
 ### Fixed

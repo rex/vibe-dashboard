@@ -63,6 +63,7 @@ Carthage/
 # --- Serena / agent scaffolding ---
 .serena/cache/
 .claude/serena-initialized
+.serena/
 
 # VIBE.yaml safety backups (VibeYamlEditor writes these to Application Support, never in-repo)
 *.bak
