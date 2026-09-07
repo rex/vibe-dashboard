@@ -90,3 +90,7 @@ skills:
   - id: "scaffold"
     applied: "2026-07-01"
     source: "transcript-backfill"
+  - id: agentic-skeleton
+    version: "0.48.0"
+    applied: '2026-09-07'
+    source: sync
